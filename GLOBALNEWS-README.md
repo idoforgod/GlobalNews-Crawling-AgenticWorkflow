@@ -9,7 +9,7 @@
 | **산출물** | Parquet (ZSTD) + SQLite (FTS5/vec) + Streamlit 대시보드 |
 | **실행 환경** | MacBook M2 Pro, 48GB RAM, Claude API $0 |
 | **상태** | Production-Ready — 20/20 단계 완료 |
-| **코드 규모** | 91개 Python 모듈, ~41,500 LOC (src) + ~18,400 LOC (tests) |
+| **코드 규모** | 91개 Python 모듈, ~41,500 LOC (src) + ~22,000 LOC (tests) |
 
 > **부모-자식 관계**: 이 프로젝트는 AgenticWorkflow 프레임워크(만능줄기세포)로부터 태어난 **자식 시스템**이다.
 > 부모 문서(AGENTICWORKFLOW-*.md)는 방법론·프레임워크를, 자식 문서(GLOBALNEWS-*.md)는 **도메인 고유 시스템**을 기술한다.
@@ -188,7 +188,9 @@ GlobalNews-Crawling-AgenticWorkflow/
 │
 ├── config/                      ← 설정 파일
 │   ├── sources.yaml             (44개 사이트 설정)
-│   └── pipeline.yaml            (8단계 파이프라인 설정)
+│   ├── review-focus.yaml        (단계별 리뷰 집중 영역 — Framework config)
+│   ├── output-structure.yaml    (단계별 산출물 구조 패턴 — Framework config)
+│   └── crontab.txt              (cron 설정 템플릿)
 │
 ├── data/                        ← 날짜별 파티션 데이터
 │   ├── raw/YYYY-MM-DD/          (원시 JSONL)
@@ -206,7 +208,7 @@ GlobalNews-Crawling-AgenticWorkflow/
 │   ├── run_weekly_rescan.sh     (주간 사이트 점검)
 │   └── archive_old_data.sh      (월간 아카이빙)
 │
-├── tests/                       ← 테스트 (43개 파일, ~287 테스트)
+├── tests/                       ← 테스트 (40개 파일, ~2,028 테스트)
 │   ├── unit/                    (단위 테스트)
 │   ├── integration/             (통합 테스트)
 │   ├── structural/              (구조 테스트)
@@ -301,7 +303,7 @@ df.groupby('topic_label')['sentiment_score'].mean().sort_values()
 ## 테스트
 
 ```bash
-# 전체 테스트 실행 (287 테스트)
+# 전체 테스트 실행 (2,028 테스트)
 pytest
 
 # 카테고리별 실행
@@ -321,13 +323,13 @@ pytest -m "not slow"     # 느린 NLP 모델 테스트 제외
 |-------------|----------|
 | 3단계 구조 | Research (4단계) → Planning (4단계) → Implementation (12단계) |
 | SOT 패턴 | `.claude/state.yaml` — 단일 상태 파일, Orchestrator만 쓰기 |
-| 4계층 QA | L0 Anti-Skip → L1 Verification → L1.5 pACS → L2 Adversarial Review |
-| P1 할루시네이션 봉쇄 | 13개 결정론적 검증 스크립트 (`validate_*.py`) |
+| 5계층 QA | L0(a-d) Anti-Skip → Pre-L1 /simplify → L1 Verification → L1.5 pACS → L2 Review(+Focus) |
+| P1 할루시네이션 봉쇄 | 11개 결정론적 검증 스크립트 (10 `validate_*.py` + `diagnose_context.py`) |
 | P2 전문가 위임 | 32개 전문 서브에이전트 |
-| Safety Hooks | 위험 명령 차단, TDD 보호, 예측적 디버깅 |
-| Context Preservation | 스냅샷 + Knowledge Archive + RLM 복원 |
+| Safety Hooks | 위험 명령 차단(exit 2) + 시크릿 출력 감지(경고) + TDD 보호 + 예측적 디버깅 |
+| Context Preservation | 스냅샷 + Knowledge Archive + RLM 복원 + Learned Patterns 표면화 + Importance-Based Retention + Phase-Aware Compact |
 
-**도메인 고유 변이**: 4-Level 재시도 (90회), 44-site Adapter Pattern, 5-Layer Signal Hierarchy, Date-Partitioned Storage, Conductor Pattern
+**도메인 고유 변이**: 4-Level 재시도 (90회, Circuit Breaker 무진전 감지 포함), 44-site Adapter Pattern, 5-Layer Signal Hierarchy, Date-Partitioned Storage, Conductor Pattern, HQ Gates (4종 Human-step 품질 검증), Autopilot Mode
 
 ---
 

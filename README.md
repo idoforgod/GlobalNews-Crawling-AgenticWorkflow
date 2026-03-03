@@ -8,7 +8,7 @@
 | **산출물** | Parquet (ZSTD) + SQLite (FTS5/vec) + Streamlit 대시보드 |
 | **실행 환경** | MacBook M2 Pro, 48GB RAM, Claude API $0 |
 | **상태** | Production-Ready — 20/20 단계 완료 |
-| **코드 규모** | 91개 Python 모듈, ~41,500 LOC (src) + ~18,400 LOC (tests) |
+| **코드 규모** | 91개 Python 모듈, ~41,500 LOC (src) + ~22,000 LOC (tests) |
 
 ---
 
@@ -107,9 +107,9 @@ GlobalNews-Crawling-AgenticWorkflow/
 │
 ├── config/                      ← 설정 파일
 │   ├── sources.yaml             (44개 사이트)
-│   ├── pipeline.yaml            (8단계 파이프라인)
 │   ├── review-focus.yaml        (단계별 리뷰 집중 영역 — Framework config)
-│   └── output-structure.yaml    (단계별 산출물 구조 패턴 — Framework config)
+│   ├── output-structure.yaml    (단계별 산출물 구조 패턴 — Framework config)
+│   └── crontab.txt              (cron 설정 템플릿)
 │
 ├── data/                        ← 날짜별 파티션 데이터
 │   ├── raw/YYYY-MM-DD/          (원시 JSONL)
@@ -118,7 +118,7 @@ GlobalNews-Crawling-AgenticWorkflow/
 │   └── output/YYYY-MM-DD/       (최종 출력: Parquet + SQLite)
 │
 ├── scripts/                     ← 운영 스크립트 (28개)
-├── tests/                       ← 테스트 (40개 파일, ~1,971 테스트)
+├── tests/                       ← 테스트 (40개 파일, ~2,028 테스트)
 │
 ├── GLOBALNEWS-README.md                       ← 시스템 상세 소개
 ├── GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md  ← 설계 철학 + 아키텍처 심층
@@ -190,12 +190,12 @@ df.groupby('topic_label')['sentiment_score'].mean().sort_values()
 | 3단계 구조 | Research (4) → Planning (4) → Implementation (12) |
 | SOT 패턴 | `.claude/state.yaml` — Orchestrator만 쓰기 |
 | 5계층 QA | L0(a-d) Anti-Skip → Pre-L1 /simplify → L1 Verification → L1.5 pACS → L2 Review(+Focus) |
-| P1 봉쇄 | 14개 결정론적 검증 스크립트 + 164개 P1 Layer 3 테스트 |
+| P1 봉쇄 | 11개 결정론적 검증 스크립트 + 336개 P1 Layer 3 테스트 |
 | 전문가 위임 | 32개 전문 서브에이전트, 6개 에이전트 팀 |
 | Safety Hooks | 위험 명령·시크릿·SQL 차단(exit 2) + 시크릿 출력 감지(경고) + TDD 보호 + 예측적 디버깅 |
 | Context Preservation | 스냅샷 + Knowledge Archive + RLM 복원 + Learned Patterns 표면화 + Phase-Aware Compact + Retry Progress Circuit Breaker |
 
-**도메인 고유 변이**: 4-Level 재시도 (90회, Circuit Breaker 무진전 감지 포함), 44-site Adapter Pattern, 5-Layer Signal Hierarchy, Date-Partitioned Storage, HQ Gates (3종 Human-step 품질 검증)
+**도메인 고유 변이**: 4-Level 재시도 (90회, Circuit Breaker 무진전 감지 포함), 44-site Adapter Pattern, 5-Layer Signal Hierarchy, Date-Partitioned Storage, HQ Gates (4종 Human-step 품질 검증)
 
 ---
 
@@ -224,7 +224,7 @@ df.groupby('topic_label')['sentiment_score'].mean().sort_values()
 ## 테스트
 
 ```bash
-pytest                      # 전체 1,971 테스트
+pytest                      # 전체 2,028 테스트
 pytest -m unit              # 단위 테스트
 pytest -m "not slow"        # NLP 모델 로딩 제외 (빠른 실행)
 ```

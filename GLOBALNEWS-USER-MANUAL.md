@@ -676,6 +676,9 @@ python3 main.py --mode crawl --sites new_site --log-level DEBUG
 | 분석 Stage N 실패 | 이전 Stage 미실행 | `--all-stages`로 Stage 1부터 순차 실행 |
 | `MemoryError` | RAM 부족 | 사이트 수를 줄이거나 (`--groups A`) 스테이지별 실행 |
 | `sqlite3.OperationalError: database is locked` | 동시 접근 | 다른 프로세스가 SQLite 사용 중인지 확인 |
+| `Retry budget exhausted` | 품질 게이트 재시도 10/15회 소진 | 산출물 품질 근본 원인 분석 후 수동 재작업. ULW 활성 시 15회, 비활성 시 10회 |
+| `Circuit breaker OPEN` | 3회 연속 ≤5점 개선 | 동일 접근법 반복 중단. 다른 전략으로 전환하거나 사용자 개입 |
+| `Autopilot stall detected` | 동일 단계 20 cycles 경과 | 워크플로우 진행이 멈춘 상태. 품질 게이트 실패 원인 확인 후 수동 개입 |
 
 ### 9.3 Tier 6 수동 개입
 
@@ -741,6 +744,56 @@ Claude Code 내에서 `/run` 또는 시작 트리거를 입력하면:
 4. **결과 리포트**: 수집 건수, 분석 결과, 출력 파일 목록 표시
 5. **데이터 인벤토리**: 생성된 파일 크기 및 경로 표시
 
+### 10.3 Autopilot Mode
+
+워크플로우 실행 시 `(human)` 단계와 AskUserQuestion을 자동 승인하는 모드이다.
+
+**활성화**:
+
+| 입력 | 동작 |
+|------|------|
+| `autopilot 모드로 실행` | SOT에 `autopilot.enabled: true` 설정 후 워크플로우 시작 |
+| `자동 모드로 워크플로우 실행` | 동일 |
+| `autopilot 해제` | SOT에 `autopilot.enabled: false` — 다음 `(human)` 단계부터 수동 전환 |
+
+**HQ Gates (4종 Human-step 품질 검증)**:
+
+| Gate | 검증 내용 |
+|------|----------|
+| HQ1 | 자동 승인된 단계의 Decision Log 존재 |
+| HQ2 | Decision Log P1 검증 통과 (DL1-DL6) |
+| HQ3 | SOT `auto_approved_steps` 정합성 |
+| HQ4 | 직전 non-human 단계의 verification-logs + pacs-logs 존재 |
+
+**Decision Log**: 자동 승인된 결정은 `autopilot-logs/step-N-decision.md`에 기록된다 (단계, 옵션, 선택 근거).
+
+### 10.4 /start 스킬과 워크플로우 상태 관리
+
+워크플로우 상태에 따라 자동 라우팅된다:
+
+| 워크플로우 상태 | 동작 | 설명 |
+|---------------|------|------|
+| `status: complete` | `/run` 실행 | 구축 완료 → 실제 시스템 실행 (크롤링 + 분석) |
+| 그 외 (`in_progress` 등) | `/start` 실행 | 구축 미완성 → 워크플로우 단계 실행 |
+
+자연어 시작 트리거 (`시작하자`, `start`, `다음 단계` 등)는 이 라우팅 규칙에 따라 적절한 동작을 자동 실행한다.
+
+### 10.5 ULW (Ultrawork) Mode
+
+프롬프트에 `ulw`를 포함하면 철저함 강도(thoroughness intensity)가 최대로 강화된다.
+
+**3가지 강화 규칙**:
+
+| 규칙 | 내용 |
+|------|------|
+| **I-1. Sisyphus Persistence** | 최대 3회 재시도, 각 시도는 다른 접근법. 100% 완료 또는 불가 사유 보고 |
+| **I-2. Mandatory Task Decomposition** | 비-trivial 작업 시 TaskCreate → TaskUpdate → TaskList 필수 |
+| **I-3. Bounded Retry Escalation** | 동일 대상 3회 초과 연속 재시도 금지. 초과 시 사용자 에스컬레이션 |
+
+**암묵적 해제**: 새 세션에서 `ulw` 없이 프롬프트를 입력하면 자동 비활성화된다 (명시적 해제 불필요).
+
+**Autopilot과의 관계**: ULW는 철저함 축(HOW THOROUGHLY), Autopilot은 자동화 축(HOW)으로 직교한다. 두 모드를 함께 사용하면 품질 게이트 재시도 한도가 10→15회로 상향된다.
+
 ---
 
 ## 11. 관련 문서
@@ -748,7 +801,7 @@ Claude Code 내에서 `/run` 또는 시작 트리거를 입력하면:
 | 문서 | 내용 |
 |------|------|
 | [`GLOBALNEWS-README.md`](GLOBALNEWS-README.md) | 시스템 개요, 빠른 시작, 실행 결과 |
-| [`GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md`](GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md) | 설계 철학, 4-Layer 아키텍처, 선택의 근거 |
+| [`GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md`](GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md) | 설계 철학, 4-Layer 시스템 아키텍처 + 5계층 QA |
 | [`prompt/workflow.md`](prompt/workflow.md) | 20-step 워크플로우 설계도 (구축 과정 기록) |
 | [`config/sources.yaml`](config/sources.yaml) | 44개 사이트 설정 (URL, 선택자, 제한) |
-| [`config/pipeline.yaml`](config/pipeline.yaml) | 8-Stage 분석 파이프라인 설정 |
+| [`data/config/pipeline.yaml`](data/config/pipeline.yaml) | 8-Stage 분석 파이프라인 설정 |
