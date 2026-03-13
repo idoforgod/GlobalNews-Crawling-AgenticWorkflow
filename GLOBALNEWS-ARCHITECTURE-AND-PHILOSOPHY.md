@@ -64,9 +64,9 @@ GlobalNews는 **단일 프로세스 내에서 4개 계층이 순차적으로 실
 
 **"Staged"의 의미**: 모놀리스이지만 8개 분석 단계가 **명확한 경계**를 갖는다. 각 단계는 Parquet 파일을 입출력으로 사용하므로, 특정 단계만 재실행하거나 단계별로 디버깅할 수 있다. 마이크로서비스의 이점(독립 배포, 독립 확장)은 불필요하지만, 모듈 경계의 이점은 확보했다.
 
-### 1.4 Never Give Up — 4-Level 재시도 + DynamicBypassEngine
+### 1.4 Never Give Up, Never Abandon — 4-Level 재시도 + Fairness Yield + Multi-Pass
 
-GlobalNews의 크롤링 철학은 **포기하지 않는 것**이다:
+GlobalNews의 크롤링 철학은 **포기하지 않는 것**이다. 크롤링 대상으로 지정된 사이트는 **어떤 상황에서도 영구적으로 포기하지 않는다**:
 
 ```
 Level 1: NetworkGuard ×5    — HTTP 수준 재시도 (지수 백오프)
@@ -76,11 +76,34 @@ Level 4: Pipeline ×3        — 전체 재시작 [60s, 120s, 300s]
 ───────────────────────────────────────────────────
 이론적 최대: 5 × 2 × 3 × 3 = 90회 자동 시도
 
-Never-Abandon 루프:
-  Phase A: DynamicBypassEngine (12개 전략, 5-Tier, 7 BlockTypes)
+Never-Abandon Multi-Pass:
+  L4 재시작 후 → 미완료 사이트 반복 크롤링 (무한 while-loop)
+  각 패스마다 새 SiteDeadline 할당 → Fairness Yield → 재큐잉
+
+DynamicBypassEngine:
+  Phase A: 12개 전략 디스패치 (5-Tier, 7 BlockTypes)
   Phase B: TotalWar fallback (전면 전환)
 Tier 6: Claude Code 인터랙티브 분석으로 에스컬레이션
 ```
+
+**SiteDeadline Fairness Yield 패턴 (ADR-065~067)**:
+
+ThreadPoolExecutor(max_workers=5)에서 121개 사이트를 병렬 크롤링할 때, 한 사이트가 느리거나 차단되면 워커 스레드를 독점하여 다른 사이트의 크롤링이 지연된다. 이를 해결하기 위한 **협력적 공정성 메커니즘**:
+
+1. **SiteDeadline 할당**: 각 사이트에 동적 타임아웃(최대 900초) 기반 데드라인 할당
+2. **Fairness Yield**: 데드라인 만료 시 현재 워커를 양보(`break`) — 부분 결과 보존
+3. **재큐잉**: yield된 사이트는 다음 패스에서 새 데드라인과 함께 재시도
+4. **완료까지 반복**: `_get_incomplete_sites()` → `_run_single_pass()` 무한 반복, 모든 121개 사이트 완료까지
+
+**P1 `deadline_yielded` 플래그**: `CrawlResult.deadline_yielded: bool` 필드가 yield 시점에서 결정론적으로 `True`로 설정된다. 이 플래그는 3곳에서 할루시네이션을 봉쇄한다:
+
+| 소비자 | 효과 |
+|--------|------|
+| `mark_site_complete` 게이팅 | `deadline_yielded=True` → CrawlState 완료 마킹 차단 |
+| `_merge_result` Sticky 전파 | 완료된 결과(`deadline_yielded=False`)만 yielded 결과를 대체 |
+| `_get_incomplete_sites` 판정 | CrawlState 확인(권위적 소스) → yielded 상태 확인 → 미완료 판정 |
+
+**CrawlState-first 완료 판정**: `_get_incomplete_sites()`에서 CrawlState(권위적 소스)를 **먼저** 확인하여, 후속 패스에서 완료된 사이트의 stale `deadline_yielded=True` 결과가 무한 루프를 유발하는 것을 방지한다.
 
 **DynamicBypassEngine**: 차단 유형(IP Block, UA Filter, Rate Limit, CAPTCHA, JS Challenge, Fingerprint, Geo-Block)을 진단하고, 해당 유형에 최적화된 전략을 5-Tier(T0~T4)로 에스컬레이션한다. 12개 전략(rotate_user_agent, exponential_backoff, stealth_headers, proxy_rotation, browser_rendering, captcha_solver, javascript_rendering, fingerprint_randomization, session_rotation, residential_proxy, distributed_crawling, human_simulation)이 등록되어 있으며, `retry_manager.py`의 `ALTERNATIVE_STRATEGIES`와 D-7 동기화로 정합성을 보장한다.
 
@@ -89,8 +112,9 @@ Tier 6: Claude Code 인터랙티브 분석으로 에스컬레이션
 - **뉴스 사이트는 일시적 장애가 빈번하다**: CDN 장애, 배포 중 다운타임, 지역 차단 등
 - **포기 비용 > 재시도 비용**: 하루 데이터 누락은 시계열 분석의 연속성을 깨뜨린다
 - **각 Level은 다른 전략을 시도한다**: 단순 재시도가 아니라, UA 교체 → 모드 전환 → 딜레이 증가 → 전체 리셋으로 **에스컬레이션**
-- **Circuit Breaker가 보호한다**: 5연속 실패 시 300초 대기(OPEN) → 1건 시도(HALF_OPEN) → 복구 확인(CLOSED)
+- **Circuit Breaker가 보호한다**: 5연속 실패 시 300초 대기(OPEN) → 1건 시도(HALF_OPEN) → 복구 확인(CLOSED). `CRAWL_NEVER_ABANDON=True` 시 Circuit Breaker OPEN에서도 즉시 최대 에스컬레이션으로 재시도
 - **DynamicBypassEngine가 지능적으로 대응한다**: 차단 유형을 진단한 뒤 해당 유형에 최적화된 전략부터 시도
+- **24시간 안전 타임아웃**: 전체 파이프라인 수준의 안전망. 정상적으로는 도달하지 않지만, 치명적 hang 방지
 
 ### 1.5 121개 사이트 — 왜 이 사이트들인가
 
@@ -248,7 +272,7 @@ src/                              (~47,700 LOC)
 ├── config/
 │   └── constants.py              350+ 상수: 경로, 임계값, 스키마
 ├── crawling/                     크롤링 엔진 (17 모듈 + 121 어댑터)
-│   ├── pipeline.py               크롤링 오케스트레이터 (1,080 lines)
+│   ├── pipeline.py               크롤링 오케스트레이터 + SiteDeadline + Multi-Pass (~1,200 lines)
 │   ├── network_guard.py          5-retry HTTP 클라이언트 (662 lines)
 │   ├── url_discovery.py          3-Tier URL 발견 (989 lines)
 │   ├── article_extractor.py      추출 체인 + 페이월 감지 (~1,400 lines)
@@ -259,11 +283,11 @@ src/                              (~47,700 LOC)
 │   ├── dynamic_bypass.py         DynamicBypassEngine — 12전략, 5-Tier, 7 BlockTypes
 │   ├── block_detector.py         7-type 차단 진단 (671 lines)
 │   ├── circuit_breaker.py        상태 머신 (~400 lines)
-│   ├── retry_manager.py          4-Level 재시도 + 12개 전략 (~400 lines)
+│   ├── retry_manager.py          4-Level 재시도 + 12개 전략 + Never-Abandon 무한 루프 (~400 lines)
 │   ├── session_manager.py        쿠키/세션 생애주기 (821 lines)
 │   ├── ua_manager.py             61+ User-Agent 4-tier (942 lines)
 │   ├── crawler.py                ENABLED_DEFAULT SOT 소비자 — 사이트별 enabled 상태 런타임 판정
-│   ├── contracts.py              RawArticle 데이터 계약 (~190 lines)
+│   ├── contracts.py              RawArticle + CrawlResult(deadline_yielded) 데이터 계약 (~190 lines)
 │   ├── crawl_report.py           사이트별 리포트 (~200 lines)
 │   └── adapters/                 121개 사이트별 어댑터
 │       ├── base_adapter.py       추상 기반 클래스 (450+ lines)
@@ -335,6 +359,16 @@ sources.yaml (121 sites)
 │  └──────────────┬─────────────────┘               │
 │                 ▼                                  │
 │     data/raw/YYYY-MM-DD/all_articles.jsonl        │
+│                                                    │
+│  ┌─────────────────────────────────────────┐      │
+│  │       Never-Abandon Multi-Pass          │      │
+│  │  while incomplete_sites:                │      │
+│  │    → SiteDeadline(fresh) 할당           │      │
+│  │    → _run_single_pass(incomplete)       │      │
+│  │    → P1 merge: completed replaces yielded│     │
+│  │    → _get_incomplete_sites() 재판정     │      │
+│  │    (CrawlState-first 완료 확인)         │      │
+│  └─────────────────────────────────────────┘      │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -504,6 +538,26 @@ class RawArticle:
 ```
 
 `frozen=True`로 불변 객체를 보장한다. 크롤링 엔진 출력의 **유일한 계약**이며, 분석 파이프라인은 이 계약만 의존한다.
+
+**CrawlResult 계약** (사이트별 크롤링 결과):
+
+```python
+@dataclass
+class CrawlResult:
+    source_id: str
+    articles: list[RawArticle]
+    discovered_urls: int = 0
+    extracted_count: int = 0
+    failed_count: int = 0
+    skipped_dedup_count: int = 0
+    skipped_freshness_count: int = 0
+    elapsed_seconds: float = 0.0
+    tier_used: int = 1
+    errors: list[str] = field(default_factory=list)
+    deadline_yielded: bool = False  # P1: Fairness Yield 시 True, false completion 봉쇄
+```
+
+`deadline_yielded` 필드는 SiteDeadline 만료 시 `break` 지점에서 결정론적으로 `True`로 설정된다. 이 플래그가 `True`인 CrawlResult는 `mark_site_complete()` 호출이 차단되어, 부분 크롤링 결과가 완료로 잘못 기록되는 것을 방지한다.
 
 ---
 
@@ -805,7 +859,7 @@ Global (max_memory_gb, gc_between_stages, parquet_compression=zstd). 단계별 (
 
 ### 7.3 constants.py (350+ 상수)
 
-경로 27개, 재시도 파라미터 (MAX_RETRIES=5, BACKOFF_MAX=60s), Circuit Breaker (FAILURE_THRESHOLD=5, RECOVERY_TIMEOUT=300s), 크롤링 (LOOKBACK_HOURS=24, MAX_ARTICLES=1000), 분석 (SBERT_DIM=384, TFIDF_MAX=10000), 신호 (CONFIDENCE=0.5, SINGULARITY=0.65)
+경로 27개, 재시도 파라미터 (MAX_RETRIES=5, BACKOFF_MAX=60s), Circuit Breaker (FAILURE_THRESHOLD=5, RECOVERY_TIMEOUT=300s), 크롤링 (LOOKBACK_HOURS=24, MAX_ARTICLES=5000, CRAWL_NEVER_ABANDON=True), 분석 (SBERT_DIM=384, TFIDF_MAX=10000), 신호 (CONFIDENCE=0.5, SINGULARITY=0.65)
 
 ---
 
@@ -889,7 +943,7 @@ pytest -m "not slow"        # NLP 모델 로딩 제외 (빠른 실행)
 
 | 변이 | 설명 |
 |------|------|
-| **4-Level 재시도** (D2) | 90회 자동 시도 + DynamicBypassEngine(12전략, 5-Tier) + Never-Abandon 루프 + Tier 7 에스컬레이션 — 부모의 재시도는 10회 |
+| **4-Level 재시도 + Fairness Yield** (D2) | 90회 자동 시도 + DynamicBypassEngine(12전략, 5-Tier) + SiteDeadline Fairness Yield + CRAWL_NEVER_ABANDON Multi-Pass + P1 `deadline_yielded` 할루시네이션 봉쇄 + Tier 7 에스컬레이션 — 부모의 재시도는 10회 |
 | **121-site Adapter Pattern** | 10개 그룹(A-J), 사이트별 전용 어댑터 — 부모에는 없는 도메인 패턴 |
 | **5-Layer Signal Hierarchy** | Fad→Short→Mid→Long→Singularity — 뉴스 도메인 고유 |
 | **Date-Partitioned Storage** | YYYY-MM-DD 디렉터리 구조 — 시계열 분석 전제 |
@@ -937,7 +991,8 @@ pytest -m "not slow"        # NLP 모델 로딩 제외 (빠른 실행)
 |------|------|------|
 | ADR-054~057 | 페이월 바이패스 시스템 (BrowserRenderer + AdaptiveExtractor + is_paywall_body) | 하드 페이월 5곳 대응 |
 | ADR-060~063 | 44→121 사이트 확장 + DynamicBypassEngine + P1 레지스트리 검증 | 크롤링 커버리지 3x 확대 |
-| ADR-064+ | D-7 Instance 13: ENABLED_DEFAULT SOT 중앙화 + AST 교차 검증(ED1-ED7) + `validate_enabled_default_sync.py` P1 스크립트 + `crawler.py` SOT 소비자 추가 | 사이트 활성화 상태 불일치 근절 |
+| ADR-064 | D-7 Instance 13: ENABLED_DEFAULT SOT 중앙화 + AST 교차 검증(ED1-ED7) + `validate_enabled_default_sync.py` P1 스크립트 + `crawler.py` SOT 소비자 추가 | 사이트 활성화 상태 불일치 근절 |
+| ADR-065~067 | SiteDeadline Fairness Yield + P1 `deadline_yielded` 플래그 + CRAWL_NEVER_ABANDON Multi-Pass + CrawlState-first 완료 판정 + MAX_ARTICLES 1000→5000 | **크롤링 절대 원칙 실현** — 121개 사이트 완벽한 크롤링 완수 보장 |
 
 ### 12.4 구축 규모
 

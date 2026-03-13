@@ -8,7 +8,7 @@
 | **부모 프레임워크** | [AgenticWorkflow](AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md) (만능줄기세포 — DNA 유전) |
 | **산출물** | Parquet (ZSTD) + SQLite (FTS5/vec) + Streamlit 대시보드 |
 | **실행 환경** | MacBook M2 Pro, 48GB RAM, Claude API $0 |
-| **상태** | Production-Ready — 20/20 단계 완료 |
+| **상태** | Production-Ready — 20/20 단계 완료, Never-Abandon 크롤링 |
 | **코드 규모** | 171개 Python 모듈, ~47,700 LOC (src) + ~24,350 LOC (tests) |
 
 > **부모-자식 관계**: 이 프로젝트는 AgenticWorkflow 프레임워크(만능줄기세포)로부터 태어난 **자식 시스템**이다.
@@ -235,7 +235,7 @@ GlobalNews-Crawling-AgenticWorkflow/
 
 **하드 페이월 사이트** (FT, NYTimes, WSJ, Bloomberg, Le Monde): `BrowserRenderer`가 서브프로세스에서 Patchright를 실행하여 쿠키 없는 "첫 방문" 경험으로 기사 전문 추출. 실패 시 `AdaptiveExtractor`가 4-stage CSS 선택자 전략으로 본문 추출. `is_paywall_body()`가 영어+프랑스어 14개 강력 패턴 + 12개 약한 패턴으로 페이월 잔존 여부를 결정론적으로 판별.
 
-### D2 — Never Give Up (4-Level 재시도)
+### D2 — Never Give Up + Never Abandon (4-Level 재시도 + Fairness Yield)
 
 ```
 Level 1: NetworkGuard ×5 (HTTP 재시도, 지수 백오프)
@@ -245,8 +245,11 @@ Level 4: Pipeline ×3 (전체 재시작)
 ────────────────────────────────────────────
 이론적 최대: 5 × 2 × 3 × 3 = 90회 자동 시도
 Never-Abandon: DynamicBypassEngine (Phase A) → TotalWar fallback (Phase B)
+Multi-Pass: Fairness Yield → 재큐잉 → 무한 반복 (모든 사이트 완료까지)
 Tier 6: Claude Code 인터랙티브 분석으로 에스컬레이션
 ```
+
+**SiteDeadline Fairness Yield**: 각 사이트에 동적 타임아웃(최대 900초)이 할당된다. 데드라인 만료 시 사이트를 **포기하지 않고** 현재 워커를 양보(yield)하여 다른 대기 사이트에 워커를 배분한다. 부분 결과는 보존되고, 해당 사이트는 다음 패스에서 새 데드라인과 함께 재시도된다. **P1 `deadline_yielded` 플래그**가 CrawlResult에 결정론적으로 설정되어, yield된 사이트가 완료로 잘못 표시되는 할루시네이션을 원천 봉쇄한다.
 
 ### D3 — 한국어 + 다국어 융합 분석
 
@@ -338,7 +341,7 @@ pytest -m "not slow"     # 느린 NLP 모델 테스트 제외
 | Safety Hooks | 위험 명령 차단(exit 2) + 시크릿 출력 감지(경고) + TDD 보호 + 예측적 디버깅 |
 | Context Preservation | 스냅샷 + Knowledge Archive + RLM 복원 + Learned Patterns 표면화 + Importance-Based Retention + Phase-Aware Compact |
 
-**도메인 고유 변이**: 4-Level 재시도 (90회, Circuit Breaker 무진전 감지 포함), 121-site Adapter Pattern (10 Groups, A-J), DynamicBypassEngine (12개 전략, 5-Tier, 7 BlockTypes) + Never-Abandon 루프, 5-Layer Signal Hierarchy, Date-Partitioned Storage, Conductor Pattern, HQ Gates (4종 Human-step 품질 검증), Autopilot Mode, Paywall Bypass System (BrowserRenderer + AdaptiveExtractor + is_paywall_body 영어/프랑스어 26패턴), SM5 Quality Gate Evidence Guard (SOT advance 시 verification+pACS 증거 물리적 강제), P1 사이트 레지스트리 교차 검증 (`validate_site_registry_sync.py` — 5개 소스 동기화), ENABLED_DEFAULT SOT 중앙화 (`constants.py` 단일 SOT → 5개 consumer import + `validate_enabled_default_sync.py` ED1-ED7/ED-CROSS 교차 검증)
+**도메인 고유 변이**: 4-Level 재시도 (90회, Circuit Breaker 무진전 감지 포함), 121-site Adapter Pattern (10 Groups, A-J), DynamicBypassEngine (12개 전략, 5-Tier, 7 BlockTypes) + Never-Abandon 루프, **SiteDeadline Fairness Yield** (데드라인 만료 시 워커 양보 → 재큐잉 → 무한 반복, P1 `deadline_yielded` 플래그로 false completion 봉쇄), **CRAWL_NEVER_ABANDON Multi-Pass** (L4 재시작 후 무한 while-loop으로 미완료 사이트 반복 크롤링, CrawlState-first 완료 판정), 5-Layer Signal Hierarchy, Date-Partitioned Storage, Conductor Pattern, HQ Gates (4종 Human-step 품질 검증), Autopilot Mode, Paywall Bypass System (BrowserRenderer + AdaptiveExtractor + is_paywall_body 영어/프랑스어 26패턴), SM5 Quality Gate Evidence Guard (SOT advance 시 verification+pACS 증거 물리적 강제), P1 사이트 레지스트리 교차 검증 (`validate_site_registry_sync.py` — 5개 소스 동기화), ENABLED_DEFAULT SOT 중앙화 (`constants.py` 단일 SOT → 5개 consumer import + `validate_enabled_default_sync.py` ED1-ED7/ED-CROSS 교차 검증)
 
 ---
 

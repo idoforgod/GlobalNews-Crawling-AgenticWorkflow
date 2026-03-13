@@ -201,6 +201,10 @@ URL 발견 (RSS/Sitemap/HTML)
                 └── Pipeline 에스컬레이션 (3단계: delay → rotate-UA → circuit-break)
     ↓
 JSONL 저장 (data/raw/YYYY-MM-DD/)
+    ↓
+Never-Abandon Multi-Pass
+    └── 미완료 사이트 재확인 (CrawlState-first)
+        └── 있으면 → 새 SiteDeadline 할당 → 재크롤링 (무한 반복)
 ```
 
 ### 3.2 크롤링 결과 확인
@@ -227,13 +231,33 @@ for src, cnt in sources.most_common():
 
 | 실패 유형 | 원인 | 자동 대응 | 수동 대응 |
 |----------|------|----------|----------|
-| HTTP 403/406 | IP/UA 차단 | UA 회전 → 지연 증가 → Circuit Break | 사이트 비활성화 (`enabled: false`) |
+| HTTP 403/406 | IP/UA 차단 | UA 회전 → 지연 증가 → Circuit Break → DynamicBypassEngine | 사이트 비활성화 (`enabled: false`) |
 | RSS 변경 | 피드 URL 변경 | 자동 감지 불가 | `sources.yaml` URL 업데이트 |
 | DOM 구조 변경 | 선택자 불일치 | fallback 선택자 시도 | 어댑터 코드 수정 |
-| 타임아웃 | 사이트 응답 지연 | 재시도 (NetworkGuard 5회) | `sources.yaml` 타임아웃 증가 |
+| 타임아웃 | 사이트 응답 지연 | SiteDeadline 만료 → Fairness Yield → 다음 패스에서 재시도 | `sources.yaml` 타임아웃 증가 |
 | Paywall 추가 | 유료화 전환 | BrowserRenderer(Patchright) → AdaptiveExtractor → title-only fallback | `sources.yaml` paywall 설정 추가 |
 | 페이월 false positive | 정상 기사가 페이월로 오감지 | `is_paywall_body()` 패턴은 strong/weak 2단계 분류로 false positive 최소화 | 로그에서 `is_paywall_truncated=True` 확인 후 패턴 조정 |
 | 브라우저 렌더링 실패 | Patchright/Playwright 미설치 | 사이트별 3회 연속 실패 시 자동 건너뛰기 (early bail-out) | `playwright install chromium` 또는 `pip install patchright` |
+| 데드라인 만료 | 크롤링 시간 초과 | **포기하지 않음** — Fairness Yield로 워커 양보 후, 다음 패스에서 새 데드라인과 함께 재시도 | 정상 동작 — Never-Abandon 패턴에 의해 자동 처리 |
+
+> **Never-Abandon 원칙**: 크롤링 대상으로 지정된 사이트는 어떤 상황에서도 영구적으로 포기하지 않는다. 데드라인 만료, Circuit Breaker OPEN, 연속 실패 등 모든 장애에 대해 시스템이 자동으로 재시도 전략을 에스컬레이션하고, 모든 사이트가 완료될 때까지 Multi-Pass 루프를 반복한다.
+
+### 3.4 크롤링 진행 모니터링
+
+백그라운드 크롤링 실행 시 진행 상황을 모니터링할 수 있다:
+
+```bash
+# 크롤링 진행 상태 확인
+.venv/bin/python scripts/check_crawl_progress.py [output_file_path]
+```
+
+출력 항목:
+- **Sites with articles**: 기사를 수집한 사이트 수 / 121
+- **Sites with 0 articles**: 추출 실패 사이트 수
+- **Sites in progress**: 현재 크롤링 중인 사이트 수
+- **Deadline yields**: Fairness Yield로 일시 중단된 사이트 수
+- **Never-abandon passes**: Multi-Pass 루프 횟수
+- **Top sites by articles**: 사이트별 기사 수 상위 15개
 
 ---
 

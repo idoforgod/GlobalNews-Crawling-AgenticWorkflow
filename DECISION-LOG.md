@@ -947,6 +947,54 @@
 - **근거**: SOT 변경 시 5개 consumer가 자동 동기화되며, preflight_check.py 드리프트를 AST 파싱으로 결정론적으로 탐지한다. 성찰에서 `crawler.py` 누락 + ED4 함수 범위 제한 발견 → 수정 완료.
 - **대안**: 7개 파일 모두 import로 통일 → 기각 (preflight_check.py는 독립 실행 가능성 보존, 장애 격리 원칙)
 
+### ADR-065: SiteDeadline Fairness Yield — 데드라인 만료 시 워커 양보 패턴
+
+- **날짜**: 2026-03-13
+- **상태**: Accepted
+- **맥락**: 기존 SiteDeadline은 제출 시점(submit-time)에 생성되어 ThreadPoolExecutor 대기 시간이 포함되었고, 만료 시 크롤링을 영구 중단했다. 이는 121개 사이트 중 느린 사이트가 영구적으로 포기되는 치명적 결함이었다.
+- **결정**: SiteDeadline을 **실행 시점(execution-time)에 생성**하고, 만료 시 **Fairness Yield** 패턴을 적용한다 — 워커를 양보(`break`)하여 다른 대기 사이트에 배분하고, 부분 결과를 보존하며, 해당 사이트를 다음 패스에서 새 데드라인과 함께 재시도한다.
+- **근거**:
+  - **Renew vs Yield 트레이드오프**: 초기에는 만료 시 자동 갱신(renew)을 구현했으나, 30년차 시니어 아키텍트 관점에서 성찰한 결과, renew는 느린 사이트가 워커를 독점하여 116+ 사이트가 대기하는 **워커 독점 문제**를 유발. Yield가 협력적 공정성을 보장.
+  - **submit-time → execution-time**: ThreadPoolExecutor 큐에서 대기하는 동안 데드라인이 소진되는 문제를 원천 차단.
+  - **부분 결과 보존**: yield 시 `result.deadline_yielded = True`로 표시하되, 이미 추출한 기사는 JSONL에 보존.
+- **대안**:
+  - 자동 갱신(renew) → 시도 후 기각 (워커 독점, 116개 사이트 기아 상태)
+  - 데드라인 제거 → 기각 (무한 대기, 전체 파이프라인 hang 위험)
+  - 우선순위 큐 → 기각 (구현 복잡도 대비 Yield가 단순하고 효과적)
+- **관련 커밋**: `b6a7340` feat: SiteDeadline Fairness Yield + P1 deadline_yielded + Never-Abandon Multi-Pass
+
+### ADR-066: P1 `deadline_yielded` 플래그 — False Completion 할루시네이션 봉쇄
+
+- **날짜**: 2026-03-13
+- **상태**: Accepted
+- **맥락**: SiteDeadline Fairness Yield 구현 후, yield된 사이트(12/500 기사만 추출)가 `extracted_count > 0`이므로 `mark_site_complete()`를 호출하여 CrawlState에 완료로 기록되었다. 이후 Never-Abandon 루프가 이 사이트를 "이미 완료됨"으로 판단하여 재시도하지 않는 **P1 할루시네이션 버그**가 발생.
+- **결정**: `CrawlResult` 데이터클래스에 `deadline_yielded: bool = False` 필드를 추가하고, 3곳에서 결정론적으로 활용한다:
+  1. **데드라인 break 지점** (2곳): `result.deadline_yielded = True` 설정
+  2. **`mark_site_complete` 게이팅**: `if result.extracted_count > 0 and not result.deadline_yielded`
+  3. **`_merge_result` Sticky 전파**: 완료된 결과(`deadline_yielded=False`)만 yielded 결과를 대체
+- **근거**: "반복적으로 100% 정확해야 하는 판정(사이트 완료 여부)"은 P1 원칙에 의해 코드가 결정론적으로 수행해야 한다. boolean 플래그는 가장 단순하면서도 오류 가능성이 최소인 메커니즘.
+- **대안**: extracted_count 기반 판정만 사용 → 기각 (12건 추출 + yield는 부분 완료이지 완료가 아님)
+- **관련 커밋**: `b6a7340`
+
+### ADR-067: CRAWL_NEVER_ABANDON Multi-Pass — 무한 반복 + CrawlState-first 완료 판정
+
+- **날짜**: 2026-03-13
+- **상태**: Accepted
+- **맥락**: L4 재시작(Pipeline ×3) 이후에도 미완료 사이트가 남을 수 있다. 기존에는 L4 재시작 3회 후 포기했으나, `CRAWL_NEVER_ABANDON` 절대 원칙에 의해 모든 사이트의 완료를 보장해야 했다.
+- **결정**: L4 재시작 후 `while True` 무한 루프로 `_get_incomplete_sites()` → `_run_single_pass()` 반복. 3가지 핵심 설계:
+  1. **CrawlState-first 완료 판정**: `_get_incomplete_sites()`에서 CrawlState(권위적 소스)를 먼저 확인 → stale yielded 결과에 의한 무한 루프 방지
+  2. **P1 merge 로직**: `existing.deadline_yielded and not result.deadline_yielded` → 완료 결과가 yielded 결과를 대체
+  3. **24시간 안전 타임아웃**: `GLOBAL_CRAWL_TIMEOUT_HOURS = 24` — 치명적 hang 방지용 최후의 안전망
+- **근거**:
+  - **3차 성찰에서 발견된 무한 루프 버그 2건**: (1) `_get_incomplete_sites`가 `deadline_yielded`를 CrawlState보다 먼저 확인 → stale yielded 결과가 영원히 미완료로 판정. (2) merge에서 `extracted_count`만 비교 → 완료 결과(5건)가 yielded 결과(12건)를 대체 못함.
+  - **retry_manager 무한 루프 상한 제거**: `advance_never_abandon_cycle()`이 항상 `True` 반환 → 무한 재시도 허용 (절대 원칙 구현).
+  - **URL discovery 실패 처리**: `return result` → `continue` — URL 발견 실패가 전체 크롤링을 중단하지 않도록 변경.
+- **대안**:
+  - L4 × 3 후 포기 → 기각 (CRAWL_NEVER_ABANDON 절대 원칙 위반)
+  - retry_manager 상한(100회) 유지 → 기각 (절대 원칙과 상충, 마일스톤 로그로 대체)
+  - D-7 CRAWL_NEVER_ABANDON 플래그 제거 → 기각 (4개 소비자의 조건부 동작이 일관성을 보장)
+- **관련 커밋**: `b6a7340`
+
 ---
 
 ## 문서 관리
