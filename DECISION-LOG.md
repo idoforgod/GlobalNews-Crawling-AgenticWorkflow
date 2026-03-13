@@ -995,6 +995,19 @@
   - D-7 CRAWL_NEVER_ABANDON 플래그 제거 → 기각 (4개 소비자의 조건부 동작이 일관성을 보장)
 - **관련 커밋**: `b6a7340`
 
+### Post-ADR-067: Bypass Discovery + Producer-Consumer 계약 정합 + 바운디드 Multi-Pass
+
+- **맥락**: ADR-067의 `while True` 무한 루프가 이론적으로 무한 크롤링 루프를 발생시킬 수 있었다. 또한 `check_crawl_progress.py`(소비자)가 `pipeline.py`(생산자)의 로그 포맷에 대한 암묵적 의존성을 갖고 있었고, SOT 값(`ENABLED_DEFAULT`, `MULTI_PASS_MAX_EXTRA`)을 하드코딩하고 있었다.
+- **결정**: 4가지 변경:
+  1. **바운디드 루프**: `while True` → `for _ in range(MULTI_PASS_MAX_EXTRA)` (cap=10). 미완료 사이트는 `_generate_failure_report()`로 `crawl_exhausted_sites.json` 생성
+  2. **Producer-Consumer 계약 정합**: `pipeline.py` 로그에 `site_id=%s` 추가, 바이패스 경로 로그에 `bypass_` 접두어로 구분하여 substring 매칭 오수집 방지
+  3. **SOT 재사용**: `check_crawl_progress.py`가 `config_loader.get_enabled_sites()`와 `constants.MULTI_PASS_MAX_EXTRA`를 lazy import로 재사용 (하드코딩 제거)
+  4. **Bypass Discovery Fallback**: URL 발견 차단 시 `DynamicBypassEngine`이 최대 5회까지 대체 전략으로 피드를 재요청. 결정론적 XML 태그 검사로 콘텐츠 타입 판별
+- **근거**: P1 할루시네이션 봉쇄 원칙 — 반복적으로 정확해야 하는 작업은 LLM 판단이 아니라 Python 코드로 강제한다. 기존 SOT 함수 재사용은 YAML 키 불일치, 기본값 오류 등 미묘한 불일치를 원천 봉쇄한다.
+- **대안**: (1) 무한 루프 유지 + 24시간 하드 타임아웃만 의존 — 기각 (타임아웃은 최후 수단이지 정상 경로가 아님). (2) 소비자에서 독립 로직 유지 — 기각 (SOT 위반, 동기화 실패 위험)
+- **영향 범위**: `pipeline.py` (4개 로그 포맷), `check_crawl_progress.py` (SOT 재사용), `url_discovery.py` (공개 프록시), `tests/crawling/test_pipeline_discovery.py` (23 tests 신규)
+- **관련 커밋**: `1928472`
+
 ---
 
 ## 문서 관리

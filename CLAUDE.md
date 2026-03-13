@@ -113,7 +113,7 @@ GlobalNews-Crawling-AgenticWorkflow/
 │   ├── context-snapshots/                 ← 런타임 스냅샷 (latest.md, knowledge-index.jsonl, risk-scores.json)
 │   └── skills/                            ← 스킬 (workflow-generator, skill-creator, subagent-creator, insight-report, doctoral-writing)
 ├── scripts/                               ← 오케스트레이션 스크립트 (sot_manager, workflow_starter, run_quality_gates, validate_*, extract_*, 전처리)
-├── src/                                   ← [자식] 핵심 소스 (171개 파일, ~48,000 LOC)
+├── src/                                   ← [자식] 핵심 소스 (171개 파일, ~48,800 LOC)
 │   ├── crawling/                          (121개 어댑터 + 안티블록 + DynamicBypassEngine)
 │   ├── analysis/                          (8단계 NLP 파이프라인)
 │   ├── storage/                           (Parquet ZSTD + SQLite FTS5/vec)

@@ -202,9 +202,10 @@ URL 발견 (RSS/Sitemap/HTML)
     ↓
 JSONL 저장 (data/raw/YYYY-MM-DD/)
     ↓
-Never-Abandon Multi-Pass
+Never-Abandon Multi-Pass (최대 MULTI_PASS_MAX_EXTRA=10회)
     └── 미완료 사이트 재확인 (CrawlState-first)
-        └── 있으면 → 새 SiteDeadline 할당 → 재크롤링 (무한 반복)
+        └── 있으면 → 새 SiteDeadline 할당 → 재크롤링
+        └── 10회 반복 후 미완료 → crawl_exhausted_sites.json 실패 리포트
 ```
 
 ### 3.2 크롤링 결과 확인
@@ -252,12 +253,45 @@ for src, cnt in sources.most_common():
 ```
 
 출력 항목:
-- **Sites with articles**: 기사를 수집한 사이트 수 / 121
+- **Sites with articles**: 기사를 수집한 사이트 수 / 121 (SOT `config_loader.get_enabled_sites()` 기반)
 - **Sites with 0 articles**: 추출 실패 사이트 수
 - **Sites in progress**: 현재 크롤링 중인 사이트 수
 - **Deadline yields**: Fairness Yield로 일시 중단된 사이트 수
-- **Never-abandon passes**: Multi-Pass 루프 횟수
+- **Never-abandon passes**: Multi-Pass 루프 횟수 / `MULTI_PASS_MAX_EXTRA`(10)
+- **Retry cap reached**: 재시도 캡에 도달한 사이트 수
+- **Freshness filtered**: 24시간 윈도우 밖 기사 필터링 건수
+- **Dedup filtered**: 중복 제거된 기사 건수
+- **Bypass Discovery**: 바이패스 시도 사이트별 결과 (OK/BLOCKED)
 - **Top sites by articles**: 사이트별 기사 수 상위 15개
+
+### 3.5 크롤링 실패 진단
+
+크롤링 완료 후 실패 사이트를 진단할 수 있다:
+
+```bash
+# 실패 리포트 확인 (Never-Abandon 루프 완료 후 생성)
+cat data/raw/$(date +%Y-%m-%d)/crawl_exhausted_sites.json | python3 -m json.tool
+
+# 실패 패턴 자동 분류 (14개 카테고리)
+.venv/bin/python scripts/diagnose_crawl_failures.py data/raw/$(date +%Y-%m-%d)/
+```
+
+**실패 카테고리** (`crawl_exhausted_sites.json`):
+
+| 카테고리 | 의미 | 대응 |
+|---------|------|------|
+| `discovery_blocked` | URL 발견 자체가 차단됨 (RSS/Sitemap/DOM 모두 실패) | `sources.yaml`의 RSS URL 변경, Bypass Discovery 상태 확인 |
+| `extraction_blocked` | URL은 발견했으나 기사 추출 0건 | 어댑터 CSS 선택자 업데이트, 페이월 설정 확인 |
+| `partial_timeout` | 일부 기사만 수집 후 시간 초과 | 정상 — 부분 결과 보존됨, 다음 크롤링에서 보완 |
+
+**바이패스 상태 확인**:
+
+```bash
+# 사이트별 바이패스 전략 성공률 확인
+cat data/config/bypass_state.json | python3 -m json.tool
+```
+
+`bypass_state.json`은 크롤링 간 학습 데이터를 영속화하여, 이전에 성공한 전략을 우선 시도한다.
 
 ---
 

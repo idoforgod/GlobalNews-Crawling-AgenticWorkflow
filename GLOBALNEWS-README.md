@@ -9,7 +9,7 @@
 | **산출물** | Parquet (ZSTD) + SQLite (FTS5/vec) + Streamlit 대시보드 |
 | **실행 환경** | MacBook M2 Pro, 48GB RAM, Claude API $0 |
 | **상태** | Production-Ready — 20/20 단계 완료, Never-Abandon 크롤링 |
-| **코드 규모** | 171개 Python 모듈, ~47,700 LOC (src) + ~24,350 LOC (tests) |
+| **코드 규모** | 171개 Python 모듈, ~48,800 LOC (src) + ~24,700 LOC (tests) |
 
 > **부모-자식 관계**: 이 프로젝트는 AgenticWorkflow 프레임워크(만능줄기세포)로부터 태어난 **자식 시스템**이다.
 > 부모 문서(AGENTICWORKFLOW-*.md)는 방법론·프레임워크를, 자식 문서(GLOBALNEWS-*.md)는 **도메인 고유 시스템**을 기술한다.
@@ -154,7 +154,7 @@ GlobalNews-Crawling-AgenticWorkflow/
 ├── pyproject.toml               ← 프로젝트 메타데이터 + 린터 설정
 ├── pytest.ini                   ← 테스트 설정
 │
-├── src/                         ← 핵심 소스 코드 (171개 모듈, ~47,700 LOC)
+├── src/                         ← 핵심 소스 코드 (171개 모듈, ~48,800 LOC)
 │   ├── config/                  ← 상수 + 설정 관리
 │   │   └── constants.py         (350+ 상수: 경로, 임계값, 스키마)
 │   ├── crawling/                ← 크롤링 엔진
@@ -208,13 +208,13 @@ GlobalNews-Crawling-AgenticWorkflow/
 │   ├── logs/                    (실행 로그)
 │   └── dedup.sqlite             (전역 중복 제거 DB)
 │
-├── scripts/                     ← 운영 스크립트 (28개)
+├── scripts/                     ← 운영 스크립트 (32개)
 │   ├── preflight_check.py       (사전 검증)
 │   ├── run_daily.sh             (일일 cron 파이프라인)
 │   ├── run_weekly_rescan.sh     (주간 사이트 점검)
 │   └── archive_old_data.sh      (월간 아카이빙)
 │
-├── tests/                       ← 테스트 (54개 파일, ~2,565 테스트)
+├── tests/                       ← 테스트 (55개 파일, ~2,588 테스트)
 │   ├── unit/                    (단위 테스트)
 │   ├── integration/             (통합 테스트)
 │   ├── structural/              (구조 테스트 + D-7 동기화 검증)
@@ -245,7 +245,7 @@ Level 4: Pipeline ×3 (전체 재시작)
 ────────────────────────────────────────────
 이론적 최대: 5 × 2 × 3 × 3 = 90회 자동 시도
 Never-Abandon: DynamicBypassEngine (Phase A) → TotalWar fallback (Phase B)
-Multi-Pass: Fairness Yield → 재큐잉 → 무한 반복 (모든 사이트 완료까지)
+Multi-Pass: Fairness Yield → 재큐잉 → 최대 MULTI_PASS_MAX_EXTRA(10)회 반복
 Tier 6: Claude Code 인터랙티브 분석으로 에스컬레이션
 ```
 
@@ -315,7 +315,7 @@ df.groupby('topic_label')['sentiment_score'].mean().sort_values()
 ## 테스트
 
 ```bash
-# 전체 테스트 실행 (~2,565 테스트)
+# 전체 테스트 실행 (~2,588 테스트)
 pytest
 
 # 카테고리별 실행
@@ -336,12 +336,12 @@ pytest -m "not slow"     # 느린 NLP 모델 테스트 제외
 | 3단계 구조 | Research (4단계) → Planning (4단계) → Implementation (12단계) |
 | SOT 패턴 | `.claude/state.yaml` — 단일 상태 파일, Orchestrator만 쓰기 |
 | 5계층 QA | L0(a-d) Anti-Skip → Pre-L1 /simplify → L1 Verification → L1.5 pACS → L2 Review(+Focus) + SM5 SOT-Level 강제 |
-| P1 할루시네이션 봉쇄 | 19개 결정론적 검증 스크립트 (8 `scripts/validate_*.py` + 11 `hooks/scripts/validate_*.py` + `diagnose_context.py` + SM5 gate evidence guard in `sot_manager.py`) + D-7 동기화 테스트 (13개 인스턴스) |
+| P1 할루시네이션 봉쇄 | 19개 결정론적 검증 스크립트 (8 `scripts/validate_*.py` + 11 `hooks/scripts/validate_*.py` + `diagnose_context.py` + SM5 gate evidence guard in `sot_manager.py`) + D-7 동기화 테스트 (14개 인스턴스) |
 | P2 전문가 위임 | 32개 전문 서브에이전트 |
 | Safety Hooks | 위험 명령 차단(exit 2) + 시크릿 출력 감지(경고) + TDD 보호 + 예측적 디버깅 |
 | Context Preservation | 스냅샷 + Knowledge Archive + RLM 복원 + Learned Patterns 표면화 + Importance-Based Retention + Phase-Aware Compact |
 
-**도메인 고유 변이**: 4-Level 재시도 (90회, Circuit Breaker 무진전 감지 포함), 121-site Adapter Pattern (10 Groups, A-J), DynamicBypassEngine (12개 전략, 5-Tier, 7 BlockTypes) + Never-Abandon 루프, **SiteDeadline Fairness Yield** (데드라인 만료 시 워커 양보 → 재큐잉 → 무한 반복, P1 `deadline_yielded` 플래그로 false completion 봉쇄), **CRAWL_NEVER_ABANDON Multi-Pass** (L4 재시작 후 무한 while-loop으로 미완료 사이트 반복 크롤링, CrawlState-first 완료 판정), 5-Layer Signal Hierarchy, Date-Partitioned Storage, Conductor Pattern, HQ Gates (4종 Human-step 품질 검증), Autopilot Mode, Paywall Bypass System (BrowserRenderer + AdaptiveExtractor + is_paywall_body 영어/프랑스어 26패턴), SM5 Quality Gate Evidence Guard (SOT advance 시 verification+pACS 증거 물리적 강제), P1 사이트 레지스트리 교차 검증 (`validate_site_registry_sync.py` — 5개 소스 동기화), ENABLED_DEFAULT SOT 중앙화 (`constants.py` 단일 SOT → 5개 consumer import + `validate_enabled_default_sync.py` ED1-ED7/ED-CROSS 교차 검증)
+**도메인 고유 변이**: 4-Level 재시도 (90회, Circuit Breaker 무진전 감지 포함), 121-site Adapter Pattern (10 Groups, A-J), DynamicBypassEngine (12개 전략, 5-Tier, 7 BlockTypes) + Never-Abandon 루프, **SiteDeadline Fairness Yield** (데드라인 만료 시 워커 양보 → 재큐잉 → 바운디드 반복, P1 `deadline_yielded` 플래그로 false completion 봉쇄), **CRAWL_NEVER_ABANDON Multi-Pass** (L4 재시작 후 최대 `MULTI_PASS_MAX_EXTRA`(10)회 반복 크롤링, 미완료 사이트 실패 시 `crawl_exhausted_sites.json` 리포트 생성, CrawlState-first 완료 판정), 5-Layer Signal Hierarchy, Date-Partitioned Storage, Conductor Pattern, HQ Gates (4종 Human-step 품질 검증), Autopilot Mode, Paywall Bypass System (BrowserRenderer + AdaptiveExtractor + is_paywall_body 영어/프랑스어 26패턴), SM5 Quality Gate Evidence Guard (SOT advance 시 verification+pACS 증거 물리적 강제), P1 사이트 레지스트리 교차 검증 (`validate_site_registry_sync.py` — 5개 소스 동기화), ENABLED_DEFAULT SOT 중앙화 (`constants.py` 단일 SOT → 5개 consumer import + `validate_enabled_default_sync.py` ED1-ED7/ED-CROSS 교차 검증)
 
 ---
 
