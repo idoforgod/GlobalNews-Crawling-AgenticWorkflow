@@ -666,6 +666,51 @@ class TestCentralityAnalysis:
         assert n_nodes == 0
 
 
+class TestFilterNetworksByWeight:
+    """Test _filter_networks_by_weight noise removal."""
+
+    def test_filter_basic(self, sample_networks_table):
+        """Edges with weight below threshold are removed."""
+        analyzer = Stage6CrossAnalyzer()
+        # sample_networks_table has weights from 3 to 15
+        filtered = analyzer._filter_networks_by_weight(sample_networks_table, min_weight=8)
+        assert filtered.num_rows < sample_networks_table.num_rows
+        # All remaining rows should have co_occurrence_count >= 8
+        for i in range(filtered.num_rows):
+            assert filtered.column("co_occurrence_count")[i].as_py() >= 8
+
+    def test_filter_below_threshold_returns_empty(self):
+        """When all edges are below threshold, return empty table."""
+        analyzer = Stage6CrossAnalyzer()
+        schema = pa.schema([
+            pa.field("entity_a", pa.utf8()),
+            pa.field("entity_b", pa.utf8()),
+            pa.field("co_occurrence_count", pa.int32()),
+            pa.field("community_id", pa.int32()),
+            pa.field("source_articles", pa.list_(pa.utf8())),
+        ])
+        table = pa.table({
+            "entity_a": ["A", "B"],
+            "entity_b": ["C", "D"],
+            "co_occurrence_count": [1, 1],
+            "community_id": [0, 0],
+            "source_articles": [["art-1"], ["art-2"]],
+        }, schema=schema)
+        filtered = analyzer._filter_networks_by_weight(table, min_weight=2)
+        assert filtered.num_rows == 0
+
+    def test_filter_none_returns_none(self):
+        """None input returns None."""
+        analyzer = Stage6CrossAnalyzer()
+        assert analyzer._filter_networks_by_weight(None, min_weight=2) is None
+
+    def test_filter_preserves_schema(self, sample_networks_table):
+        """Filtered table has the same schema as original."""
+        analyzer = Stage6CrossAnalyzer()
+        filtered = analyzer._filter_networks_by_weight(sample_networks_table, min_weight=5)
+        assert filtered.schema.equals(sample_networks_table.schema)
+
+
 class TestNetworkEvolution:
     """Test T42 weekly network evolution."""
 

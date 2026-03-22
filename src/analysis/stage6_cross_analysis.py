@@ -148,6 +148,12 @@ FRAME_MIN_SOURCES_PER_TOPIC: int = 2
 # Network evolution
 NETWORK_MIN_EDGES: int = 10
 
+# Centrality / large-graph guard
+# Edges with co_occurrence_count < this are noise (98% of edges are weight=1).
+CENTRALITY_MIN_WEIGHT: int = 2
+# Approximate betweenness via random k-node sampling (NetworkX docs recommend ~500).
+CENTRALITY_BETWEENNESS_K: int = 500
+
 # Contradiction detection
 CONTRADICTION_SIMILARITY_THRESHOLD: float = 0.6
 NLI_BATCH_SIZE: int = 16
@@ -1223,11 +1229,19 @@ class Stage6CrossAnalyzer:
         """T40: Build knowledge graph from NER co-occurrence with relation type inference.
 
         Uses the networks.parquet (entity co-occurrence from Stage 4 Louvain)
-        and adds relation type heuristics.
+        and adds relation type heuristics. Filters noise edges (weight < CENTRALITY_MIN_WEIGHT)
+        to keep only statistically meaningful co-occurrences.
         """
         records: list[CrossAnalysisRecord] = []
 
         if networks_table is None:
+            return records
+
+        # Filter noise: weight=1 edges are single co-occurrences (statistically insignificant)
+        networks_table = self._filter_networks_by_weight(
+            networks_table, CENTRALITY_MIN_WEIGHT,
+        )
+        if networks_table is None or networks_table.num_rows == 0:
             return records
 
         for i in range(networks_table.num_rows):
@@ -1305,6 +1319,33 @@ class Stage6CrossAnalyzer:
             return "works_at"
         return "mentioned_with"
 
+    @staticmethod
+    def _filter_networks_by_weight(networks_table, min_weight: int):
+        """Filter networks_table to rows where co_occurrence_count >= min_weight.
+
+        Returns a new PyArrow table (original is not modified).
+        If networks_table is None or already small enough, returns as-is.
+        """
+        if networks_table is None or networks_table.num_rows == 0:
+            return networks_table
+
+        pa, _ = _lazy_import_pyarrow()
+        import pyarrow.compute as pc
+
+        weight_col = networks_table.column("co_occurrence_count")
+        mask = pc.greater_equal(weight_col, min_weight)
+        filtered = networks_table.filter(mask)
+
+        if filtered.num_rows < networks_table.num_rows:
+            logger.info(
+                "stage6_networks_filtered",
+                original_rows=networks_table.num_rows,
+                filtered_rows=filtered.num_rows,
+                min_weight=min_weight,
+            )
+
+        return filtered
+
     def _compute_centrality(
         self,
         nx,
@@ -1319,12 +1360,19 @@ class Stage6CrossAnalyzer:
         if networks_table is None or networks_table.num_rows == 0:
             return records, n_nodes, n_edges, modularity
 
-        # Build networkx graph
+        # Filter noise edges (weight=1 accounts for ~98% of edges in typical runs)
+        filtered_table = self._filter_networks_by_weight(
+            networks_table, CENTRALITY_MIN_WEIGHT,
+        )
+        if filtered_table is None or filtered_table.num_rows == 0:
+            return records, n_nodes, n_edges, modularity
+
+        # Build networkx graph from filtered edges
         G = nx.Graph()
-        for i in range(networks_table.num_rows):
-            a = networks_table.column("entity_a")[i].as_py()
-            b = networks_table.column("entity_b")[i].as_py()
-            w = networks_table.column("co_occurrence_count")[i].as_py()
+        for i in range(filtered_table.num_rows):
+            a = filtered_table.column("entity_a")[i].as_py()
+            b = filtered_table.column("entity_b")[i].as_py()
+            w = filtered_table.column("co_occurrence_count")[i].as_py()
             if a and b:
                 G.add_edge(str(a), str(b), weight=float(w))
 
@@ -1342,8 +1390,11 @@ class Stage6CrossAnalyzer:
         # Degree centrality
         degree_cent = nx.degree_centrality(G)
 
-        # Betweenness centrality
-        betweenness_cent = nx.betweenness_centrality(G, weight="weight")
+        # Betweenness centrality (approximate via k-node sampling for large graphs)
+        k_sample = min(CENTRALITY_BETWEENNESS_K, n_nodes)
+        betweenness_cent = nx.betweenness_centrality(
+            G, weight="weight", k=k_sample,
+        )
 
         # PageRank
         try:
@@ -1351,9 +1402,9 @@ class Stage6CrossAnalyzer:
         except nx.PowerIterationFailedConvergence:
             pagerank = {n: 1.0 / n_nodes for n in G.nodes()}
 
-        # Modularity (via greedy community detection)
+        # Modularity (Louvain — O(m) linear, replaces O(n*m*log n) greedy)
         try:
-            communities = list(nx.community.greedy_modularity_communities(G))
+            communities = list(nx.community.louvain_communities(G, resolution=1.0))
             modularity = nx.community.modularity(G, communities)
         except Exception:
             modularity = 0.0
@@ -2139,13 +2190,21 @@ class Stage6CrossAnalyzer:
             logger.warning("stage6_graphrag_skip", reason="networkx not installed")
             return result
 
-        # Build entity -> articles mapping from networks table
+        # Filter noise edges for GraphRAG (consistent with centrality and KG filtering)
+        filtered_networks = self._filter_networks_by_weight(
+            networks_table, CENTRALITY_MIN_WEIGHT,
+        )
+        if filtered_networks is None or filtered_networks.num_rows == 0:
+            logger.info("stage6_graphrag_skip", reason="no edges after noise filtering")
+            return result
+
+        # Build entity -> articles mapping from filtered networks table
         entity_articles: dict[str, set[str]] = defaultdict(set)
-        for i in range(networks_table.num_rows):
-            entity_a = networks_table.column("entity_a")[i].as_py()
-            entity_b = networks_table.column("entity_b")[i].as_py()
-            if "source_articles" in networks_table.column_names:
-                arts = networks_table.column("source_articles")[i].as_py()
+        for i in range(filtered_networks.num_rows):
+            entity_a = filtered_networks.column("entity_a")[i].as_py()
+            entity_b = filtered_networks.column("entity_b")[i].as_py()
+            if "source_articles" in filtered_networks.column_names:
+                arts = filtered_networks.column("source_articles")[i].as_py()
                 if arts:
                     if entity_a:
                         entity_articles[str(entity_a)].update(arts)
