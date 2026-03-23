@@ -151,6 +151,11 @@ class DiscoveredURL:
         discovered_via: Discovery method ("rss", "sitemap", "dom", "playwright").
         published_at: Publication date from feed/sitemap. None if not available.
         title_hint: Title extracted from feed entry. None if not available.
+        body_hint: Article body from RSS content:encoded/summary. None if not
+            available or too short (<200 chars). Used by pipeline to skip HTTP
+            fetch for sites whose article pages return 403 but RSS provides
+            full content. Max 10KB to prevent memory bloat.
+        author_hint: Author name from RSS dc:creator. None if not available.
         priority: Ordering priority (lower = higher priority). Default 0.
     """
 
@@ -159,6 +164,8 @@ class DiscoveredURL:
     discovered_via: str = "rss"
     published_at: datetime | None = None
     title_hint: str | None = None
+    body_hint: str | None = None
+    author_hint: str | None = None
     priority: int = 0
 
 

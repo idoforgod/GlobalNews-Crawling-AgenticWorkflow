@@ -49,6 +49,113 @@ TRACKING_PARAMS = frozenset({
     "icid", "int_cmp", "clickid",
 })
 
+# RSS Content Extraction: minimum body length and max size cap
+_MIN_RSS_BODY_HINT = 200     # chars — shorter is likely a teaser, not useful
+_MAX_RSS_BODY_HINT = 10_000  # chars — prevent memory bloat from tag pages
+
+# HTML tag stripping regex (lightweight alternative to BeautifulSoup for
+# RSS content:encoded fields — avoids importing bs4 at discovery time)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_COLLAPSE_RE = re.compile(r"\s+")
+
+
+def _extract_rss_body_hint(entry: dict) -> str | None:
+    """Extract article body text from an RSS feed entry.
+
+    Checks content:encoded first (usually full body), falls back to summary.
+    Strips HTML tags and collapses whitespace. Returns None if result is
+    shorter than _MIN_RSS_BODY_HINT.
+
+    Args:
+        entry: feedparser entry dict.
+
+    Returns:
+        Plain-text body string, or None if not substantial enough.
+    """
+    raw = ""
+    # feedparser stores content:encoded in entry.content list
+    content_list = entry.get("content", [])
+    if content_list and isinstance(content_list, list):
+        raw = content_list[0].get("value", "")
+
+    # Fallback to summary/description
+    if not raw or len(raw) < _MIN_RSS_BODY_HINT:
+        summary = entry.get("summary", "")
+        if len(summary) > len(raw):
+            raw = summary
+
+    if not raw or len(raw) < _MIN_RSS_BODY_HINT:
+        return None
+
+    # Strip HTML tags, then decode HTML entities (&amp; → &, &lt; → <)
+    import html as html_mod
+    text = _HTML_TAG_RE.sub(" ", raw)
+    text = html_mod.unescape(text)
+    text = _WHITESPACE_COLLAPSE_RE.sub(" ", text).strip()
+
+    if len(text) < _MIN_RSS_BODY_HINT:
+        return None
+
+    # Cap at max to prevent memory bloat (e.g., VNExpress 3000+ tag pages)
+    if len(text) > _MAX_RSS_BODY_HINT:
+        text = text[:_MAX_RSS_BODY_HINT]
+
+    return text
+
+
+def _extract_xml_body_hint(
+    item: ET.Element,
+    ns_prefix: str = "",
+) -> str | None:
+    """Extract body text from an XML RSS/Atom element.
+
+    For RSS 2.0 <item>: checks <content:encoded>, then <description>.
+    For Atom <entry>: checks <content>, then <summary>.
+
+    Args:
+        item: XML element (RSS <item> or Atom <entry>).
+        ns_prefix: Namespace prefix for Atom elements (e.g., "{http://...}").
+
+    Returns:
+        Plain-text body, or None if not substantial.
+    """
+    raw = ""
+
+    # RSS 2.0: <content:encoded> (full body)
+    content_ns = "{http://purl.org/rss/1.0/modules/content/}"
+    encoded_el = item.find(f"{content_ns}encoded")
+    if encoded_el is not None and encoded_el.text:
+        raw = encoded_el.text
+
+    # Atom: <content> or <summary>
+    if not raw and ns_prefix:
+        content_el = item.find(f"{ns_prefix}content")
+        if content_el is not None and content_el.text:
+            raw = content_el.text
+
+    # RSS 2.0 fallback: <description>
+    if not raw or len(raw) < _MIN_RSS_BODY_HINT:
+        desc_tag = f"{ns_prefix}summary" if ns_prefix else "description"
+        desc_el = item.find(desc_tag)
+        if desc_el is not None and desc_el.text and len(desc_el.text) > len(raw):
+            raw = desc_el.text
+
+    if not raw or len(raw) < _MIN_RSS_BODY_HINT:
+        return None
+
+    # Strip HTML, decode entities, collapse whitespace, cap size
+    import html as html_mod
+    text = _HTML_TAG_RE.sub(" ", raw)
+    text = html_mod.unescape(text)
+    text = _WHITESPACE_COLLAPSE_RE.sub(" ", text).strip()
+
+    if len(text) < _MIN_RSS_BODY_HINT:
+        return None
+    if len(text) > _MAX_RSS_BODY_HINT:
+        text = text[:_MAX_RSS_BODY_HINT]
+
+    return text
+
 
 # ---------------------------------------------------------------------------
 # URL Normalization
@@ -257,12 +364,18 @@ class RSSParser:
 
             title_hint = entry.get("title", None)
 
+            # Extract body from content:encoded or summary (RSS Content Extraction)
+            body_hint = _extract_rss_body_hint(entry)
+            author_hint = entry.get("author", None)
+
             results.append(DiscoveredURL(
                 url=normalized,
                 source_id=source_id,
                 discovered_via="rss",
                 published_at=pub_date,
                 title_hint=title_hint,
+                body_hint=body_hint,
+                author_hint=author_hint,
                 priority=0,
             ))
 
@@ -389,12 +502,20 @@ class RSSParser:
             if pub_el is not None and pub_el.text:
                 pub_date = _parse_datetime_string(pub_el.text.strip())
 
+            # Extract body from <content:encoded> or <description>
+            body_hint = _extract_xml_body_hint(item)
+            creator_el = item.find("{http://purl.org/dc/elements/1.1/}creator")
+            author_hint = (creator_el.text.strip()
+                           if creator_el is not None and creator_el.text else None)
+
             results.append(DiscoveredURL(
                 url=url,
                 source_id=source_id,
                 discovered_via=discovered_via,
                 published_at=pub_date,
                 title_hint=title_hint,
+                body_hint=body_hint,
+                author_hint=author_hint,
             ))
 
         # Atom: <entry><link href="..."><published>...
@@ -420,12 +541,23 @@ class RSSParser:
                 if pub_el is not None and pub_el.text:
                     pub_date = _parse_datetime_string(pub_el.text.strip())
 
+                # Atom content body
+                body_hint = _extract_xml_body_hint(entry, ns_prefix=ns_prefix)
+                author_el = entry.find(f"{ns_prefix}author")
+                author_hint = None
+                if author_el is not None:
+                    name_el = author_el.find(f"{ns_prefix}name")
+                    if name_el is not None and name_el.text:
+                        author_hint = name_el.text.strip()
+
                 results.append(DiscoveredURL(
                     url=url,
                     source_id=source_id,
                     discovered_via=discovered_via,
                     published_at=pub_date,
                     title_hint=title_hint,
+                    body_hint=body_hint,
+                    author_hint=author_hint,
                 ))
 
         logger.info("rss_xml_parsed source_id=%s via=%s articles_found=%s", source_id, discovered_via, len(results))

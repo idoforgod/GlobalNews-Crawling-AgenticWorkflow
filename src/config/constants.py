@@ -238,7 +238,7 @@ VALID_LANGUAGES = {
     "it", "pt", "pl", "cs", "sv", "no", "mn", "ru", "hi",
 }
 VALID_GROUPS = {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"}
-VALID_CRAWL_METHODS = {"rss", "sitemap", "api", "playwright", "dom"}
+VALID_CRAWL_METHODS = {"rss", "rss_content", "sitemap", "api", "playwright", "dom"}
 VALID_PAYWALL_TYPES = {"none", "soft-metered", "hard"}
 VALID_DIFFICULTY_TIERS = {"Easy", "Medium", "Hard", "Extreme"}
 VALID_BOT_BLOCK_LEVELS = {"LOW", "MEDIUM", "HIGH"}

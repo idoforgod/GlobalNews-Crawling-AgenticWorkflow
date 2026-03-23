@@ -491,7 +491,7 @@ sources:
       difficulty_tier: Hard
       daily_article_estimate: 10
       sections_count: 5
-      enabled: true
+      enabled: false
   marketwatch:
     name: MarketWatch
     url: https://www.marketwatch.com
@@ -644,7 +644,7 @@ sources:
       difficulty_tier: Extreme
       daily_article_estimate: 150
       sections_count: 15
-      enabled: true
+      enabled: false
   wsj:
     name: Wall Street Journal
     url: https://www.wsj.com
@@ -678,7 +678,7 @@ sources:
       difficulty_tier: Extreme
       daily_article_estimate: 200
       sections_count: 15
-      enabled: true
+      enabled: false
   latimes:
     name: Los Angeles Times
     url: https://www.latimes.com
@@ -798,7 +798,7 @@ sources:
       difficulty_tier: Medium
       daily_article_estimate: 500
       sections_count: 20
-      enabled: true
+      enabled: false
   bloomberg:
     name: Bloomberg
     url: https://www.bloomberg.com
@@ -1456,7 +1456,7 @@ sources:
       rendering_required: false
       charset: utf-8
     meta:
-      enabled: true
+      enabled: false
       difficulty_tier: Easy
       daily_article_estimate: 40
       sections_count: 5
@@ -1785,6 +1785,7 @@ sources:
       rss_url: https://en.tempo.co/feed
       sitemap_url: https://en.tempo.co/sitemap.xml
       rate_limit_seconds: 2
+      per_site_timeout: 1200
       max_requests_per_hour: 200
       jitter_seconds: 0
       sections:
@@ -1887,6 +1888,7 @@ sources:
       rss_url: https://e.vnexpress.net/feed
       sitemap_url: https://e.vnexpress.net/sitemap.xml
       rate_limit_seconds: 2
+      per_site_timeout: 1200
       max_requests_per_hour: 200
       jitter_seconds: 0
       sections:
@@ -2311,7 +2313,7 @@ sources:
       rendering_required: false
       charset: utf-8
     meta:
-      enabled: true
+      enabled: false
       difficulty_tier: Medium
       daily_article_estimate: 100
       sections_count: 5
@@ -2345,7 +2347,7 @@ sources:
       rendering_required: false
       charset: utf-8
     meta:
-      enabled: true
+      enabled: false
       difficulty_tier: Medium
       daily_article_estimate: 60
       sections_count: 5
@@ -2413,7 +2415,7 @@ sources:
       rendering_required: false
       charset: utf-8
     meta:
-      enabled: true
+      enabled: false
       difficulty_tier: Medium
       daily_article_estimate: 80
       sections_count: 5
@@ -2565,6 +2567,7 @@ sources:
       rss_url: https://www.aftonbladet.se/feed
       sitemap_url: https://www.aftonbladet.se/sitemap.xml
       rate_limit_seconds: 3
+      per_site_timeout: 1200
       max_requests_per_hour: 120
       jitter_seconds: 0
       sections:
@@ -2717,7 +2720,7 @@ sources:
       rendering_required: false
       charset: utf-8
     meta:
-      enabled: true
+      enabled: false
       difficulty_tier: Medium
       daily_article_estimate: 10
       sections_count: 5
@@ -2803,6 +2806,7 @@ sources:
       rss_url: https://www.clarin.com/feed
       sitemap_url: https://www.clarin.com/sitemap.xml
       rate_limit_seconds: 3
+      per_site_timeout: 1200
       max_requests_per_hour: 120
       jitter_seconds: 0
       sections:
@@ -2871,6 +2875,7 @@ sources:
       rss_url: https://www.folha.uol.com.br/feed
       sitemap_url: https://www.folha.uol.com.br/sitemap.xml
       rate_limit_seconds: 3
+      per_site_timeout: 1200
       max_requests_per_hour: 120
       jitter_seconds: 0
       sections:
@@ -3617,7 +3622,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://feeds.feedburner.com/ndtvnews-latest
+      rss_url: https://feeds.feedburner.com/ndtvnews-top-stories
       sitemap_url: /sitemap.xml
       rate_limit_seconds: 5
       crawl_delay_mandatory: null
@@ -3787,7 +3792,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.dailymaverick.co.za/rss
+      rss_url: https://www.dailymaverick.co.za/dmrss/
       sitemap_url: /sitemap.xml
       rate_limit_seconds: 5
       crawl_delay_mandatory: null
@@ -4013,4 +4018,83 @@ sources:
       difficulty_tier: Easy
       daily_article_estimate: 60
       sections_count: 8
+      enabled: true
+
+  # --- Replacement sites (added 2026-03-23) ---
+  # Replacing: Bloomberg, WSJ, MarketWatch, LA Times (all 403-blocked)
+  # Verified RSS 200 OK via WebFetch on 2026-03-23
+
+  npr:
+    name: NPR News
+    url: https://www.npr.org
+    region: us
+    language: en
+    group: E
+    crawl:
+      primary_method: rss
+      fallback_methods:
+      - dom
+      rss_url: https://feeds.npr.org/1001/rss.xml
+      rate_limit_seconds: 5
+      rendering_required: false
+    anti_block:
+      ua_tier: 1
+      default_escalation_tier: 1
+      max_escalation_tier: 3
+      requires_proxy: false
+      bot_block_level: LOW
+    meta:
+      difficulty_tier: Easy
+      daily_article_estimate: 50
+      sections_count: 5
+      enabled: true
+
+  upi:
+    name: United Press International
+    url: https://www.upi.com
+    region: us
+    language: en
+    group: E
+    crawl:
+      primary_method: rss
+      fallback_methods:
+      - dom
+      rss_url: https://rss.upi.com/news/news.rss
+      rate_limit_seconds: 5
+      rendering_required: false
+    anti_block:
+      ua_tier: 1
+      default_escalation_tier: 1
+      max_escalation_tier: 3
+      requires_proxy: false
+      bot_block_level: LOW
+    meta:
+      difficulty_tier: Easy
+      daily_article_estimate: 80
+      sections_count: 6
+      enabled: true
+
+  pbsnewshour:
+    name: PBS NewsHour
+    url: https://www.pbs.org/newshour
+    region: us
+    language: en
+    group: E
+    crawl:
+      primary_method: rss
+      fallback_methods:
+      - dom
+      rss_url: https://www.pbs.org/newshour/feeds/rss/headlines
+      rate_limit_seconds: 5
+      rendering_required: false
+    anti_block:
+      ua_tier: 1
+      default_escalation_tier: 1
+      max_escalation_tier: 3
+      requires_proxy: false
+      bot_block_level: LOW
+    meta:
+      difficulty_tier: Easy
+      daily_article_estimate: 30
+      sections_count: 4
       enabled: true

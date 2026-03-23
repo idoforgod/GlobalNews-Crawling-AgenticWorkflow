@@ -209,12 +209,16 @@ def _extract_from_sources_yaml(project_dir: str) -> dict[str, set[str]] | None:
 # ---------------------------------------------------------------------------
 
 # Expected group counts (A-J)
+# Updated 2026-03-23: +3 sites (npr, upi, pbsnewshour in Group E),
+# 9 sites disabled (bloomberg, wsj, marketwatch, latimes, euractiv,
+# lefigaro, liberation, ouestfrance, icelandmonitor).
+# Counts include all sites (enabled + disabled).
 _EXPECTED_COUNTS: dict[str, int] = {
-    "A": 5, "B": 4, "C": 3, "D": 10,
-    "E": 22, "F": 23, "G": 38,
-    "H": 4, "I": 8, "J": 4,
+    "A": 5, "B": 3, "C": 2, "D": 8,
+    "E": 23, "F": 22, "G": 39,
+    "H": 4, "I": 9, "J": 4,
 }
-_EXPECTED_TOTAL = 116  # Updated from sum of _EXPECTED_COUNTS after site reduction
+_EXPECTED_TOTAL = 119  # 116 original + 3 replacement sites
 
 
 def validate_sync(project_dir: str, require_sot: bool = False) -> dict[str, Any]:

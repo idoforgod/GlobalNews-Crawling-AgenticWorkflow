@@ -49,7 +49,7 @@ from src.config.constants import (
     DISCOVERY_BYPASS_MAX_ATTEMPTS,
     BYPASS_STATE_PATH,
 )
-from src.crawling.contracts import RawArticle, CrawlResult, DiscoveredURL
+from src.crawling.contracts import RawArticle, CrawlResult, DiscoveredURL, compute_content_hash
 from src.crawling.network_guard import NetworkGuard
 from src.crawling.url_discovery import URLDiscovery
 from src.crawling.article_extractor import ArticleExtractor
@@ -87,6 +87,10 @@ from src.utils.error_handler import (
 )
 
 logger = logging.getLogger(__name__)
+
+# RSS Content Extraction: minimum body length to skip HTTP fetch
+# Cross-ref: url_discovery.py _MIN_RSS_BODY_HINT (same 200-char threshold)
+_MIN_RSS_BODY_FOR_EXTRACTION = 200
 
 
 # ---------------------------------------------------------------------------
@@ -993,20 +997,31 @@ class CrawlingPipeline:
         except KeyError:
             return None
 
-    def _create_rss_fallback_article(
+    def _create_article_from_rss(
         self,
         url_obj: DiscoveredURL,
         site_id: str,
         site_cfg: dict[str, Any],
+        full_body: bool = False,
     ) -> RawArticle | None:
-        """Create a title-only article from RSS metadata when page is blocked.
+        """Create a RawArticle from RSS metadata.
 
-        For hard-paywall sites with title_only=true, the RSS feed already
-        provides title, URL, and published_at. When the article page returns
-        403, we save what we have rather than losing the article entirely.
+        Unified method replacing duplicated fallback logic. When full_body=True
+        and body_hint is available, creates a complete article without HTTP
+        fetch. When full_body=False, creates title-only (paywall-truncated).
+
+        Args:
+            url_obj: Discovered URL with RSS metadata (title_hint, body_hint).
+            site_id: Site identifier.
+            site_cfg: Site config from sources.yaml.
+            full_body: If True, use body_hint for full content extraction.
+
+        Returns:
+            RawArticle, or None if title missing or freshness filter fails.
         """
         if not url_obj.title_hint:
             return None
+
         source_name = site_cfg.get("name", site_id)
         language = site_cfg.get("language", "en")
         published_at = url_obj.published_at
@@ -1016,24 +1031,48 @@ class CrawlingPipeline:
             if published_at < self._lookback_cutoff:
                 return None
 
-        import hashlib
         title = url_obj.title_hint.strip()
-        content_hash = hashlib.sha256(title.encode("utf-8")).hexdigest()
+        body = ""
+        is_truncated = True
+        crawl_method = "rss"
+
+        if full_body and url_obj.body_hint and len(url_obj.body_hint) >= _MIN_RSS_BODY_FOR_EXTRACTION:
+            body = url_obj.body_hint
+            is_truncated = False
+            crawl_method = "rss_content"
+
+        content_hash = compute_content_hash(body) if body else (
+            compute_content_hash(title))
 
         return RawArticle(
             url=url_obj.url,
             title=title,
-            body="",
+            body=body,
             source_id=site_id,
             source_name=source_name,
             language=language,
             published_at=published_at,
             crawled_at=datetime.now(timezone.utc),
+            author=url_obj.author_hint,
             crawl_tier=1,
-            crawl_method="rss",
-            is_paywall_truncated=True,
+            crawl_method=crawl_method,
+            is_paywall_truncated=is_truncated,
             content_hash=content_hash,
         )
+
+    def _create_rss_fallback_article(
+        self,
+        url_obj: DiscoveredURL,
+        site_id: str,
+        site_cfg: dict[str, Any],
+    ) -> RawArticle | None:
+        """Create a title-only article from RSS metadata when page is blocked.
+
+        Thin wrapper around _create_article_from_rss(full_body=False).
+        Preserves backward compatibility with existing error handler callsites.
+        """
+        return self._create_article_from_rss(
+            url_obj, site_id, site_cfg, full_body=False)
 
     # -----------------------------------------------------------------------
     # Single Pass (all sites, with Level 2+3 retry per site)
@@ -1145,12 +1184,17 @@ class CrawlingPipeline:
                     # Sites with higher rate limits need more time per URL.
                     crawl_cfg = site_cfg.get("crawl", {})
                     rate_limit = crawl_cfg.get("rate_limit_seconds", DEFAULT_RATE_LIMIT_SECONDS)
-                    # Budget: rate_limit * expected_urls * 1.5 safety margin + 60s overhead
-                    # Capped between PER_SITE_TIMEOUT_SECONDS and 900s (15 min)
-                    dynamic_timeout = max(
-                        PER_SITE_TIMEOUT_SECONDS,
-                        min(rate_limit * 100 * 1.5 + 60, 900.0),
-                    )
+                    # Per-site timeout override from sources.yaml (optional)
+                    cfg_timeout = crawl_cfg.get("per_site_timeout")
+                    if cfg_timeout is not None:
+                        dynamic_timeout = float(cfg_timeout)
+                    else:
+                        # Budget: rate_limit * expected_urls * 1.5 safety margin + 60s overhead
+                        # Capped between PER_SITE_TIMEOUT_SECONDS and 900s (15 min)
+                        dynamic_timeout = max(
+                            PER_SITE_TIMEOUT_SECONDS,
+                            min(rate_limit * 100 * 1.5 + 60, 900.0),
+                        )
                     # BUG FIX: Pass timeout_seconds instead of pre-created deadline.
                     # Previously, SiteDeadline was created here at submit time,
                     # causing queued sites to have their deadline expire while
@@ -2001,6 +2045,35 @@ class CrawlingPipeline:
                     site_id, self._max_articles,
                 )
                 break
+
+            # ---- RSS Content Extraction shortcut ----
+            # If RSS feed provided full body text, skip HTTP fetch entirely.
+            # Must be BEFORE Circuit Breaker check — these sites' article pages
+            # return 403, so CB is already OPEN. Fetching would fail.
+            if (url_obj.body_hint
+                    and len(url_obj.body_hint) >= _MIN_RSS_BODY_FOR_EXTRACTION
+                    and url_obj.title_hint):
+                article = self._create_article_from_rss(
+                    url_obj, site_id, site_cfg, full_body=True)
+                if article is not None:
+                    article_id = str(uuid.uuid4())
+                    dedup_result = self._dedup.is_duplicate(
+                        url=article.url, title=article.title,
+                        body=article.body, source_id=site_id,
+                        article_id=article_id)
+                    if dedup_result.is_duplicate:
+                        result.skipped_dedup_count += 1
+                    else:
+                        writer.write_article(article)
+                        result.extracted_count += 1
+                        logger.info(
+                            "rss_content_extracted url=%s site_id=%s words=%d",
+                            url_obj.url[:80], site_id,
+                            len(article.body.split()))
+                    self._circuit_breakers.record_success(site_id)
+                    self._retry_manager.mark_url_success(site_id, url_obj.url)
+                    continue
+            # ---- END RSS Content Extraction shortcut ----
 
             # Circuit breaker — D-7: CRAWL_NEVER_ABANDON from constants.py
             if not self._circuit_breakers.is_allowed(site_id):
