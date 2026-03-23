@@ -203,7 +203,10 @@ KIWI_VERSION = "0.22.2"
 SPACY_MODEL_NAME = "en_core_web_sm"
 KOBERT_MODEL_NAME = "monologg/kobert"
 KCELECTRA_MODEL_NAME = "monologg/koelectra-base-finetuned-naver-ner"
-BART_MNLI_MODEL_NAME = "facebook/bart-large-mnli"
+# DistilBART: 140M params vs BART-large 406M → 3× faster on MPS
+# Quality impact: ~2% accuracy drop on zero-shot NLI benchmarks
+# Changed 2026-03-24: 31h → ~10h Stage 3 on M3 8GB
+BART_MNLI_MODEL_NAME = "valhalla/distilbart-mnli-12-3"
 NER_MULTILINGUAL_MODEL_NAME = "Davlan/xlm-roberta-base-ner-hrl"
 
 # =============================================================================
