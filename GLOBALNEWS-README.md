@@ -73,6 +73,89 @@ INSIGHT (Workflow B): data/insights/{run_id}/
 
 ---
 
+## 시스템 상세 — 무엇을, 어떻게, 왜
+
+### 크롤링 엔진 (Workflow A — 수집)
+
+112개 국제 뉴스 사이트에서 4,230건/일을 자동 수집합니다.
+
+**3-Tier URL 발견**: RSS Feed → Sitemap XML → DOM Scraping 순서로 기사 URL을 탐색. 실패 시 Google News/GDELT 외부 fallback.
+
+**4단계 기사 추출**: Trafilatura → Arc Fusion → CSS Adaptive → Browser Rendering (Patchright). 페이월 사이트는 브라우저 렌더링으로 우회.
+
+**4-Level 재시도 — 최대 90회 자동 복구**:
+
+| Level | 대상 | 재시도 | 전략 | 시간 |
+|-------|------|--------|------|------|
+| L1 NetworkGuard | HTTP 요청 | 5회 | 지수 백오프 1~60초 | 수 초 |
+| L2 Strategy | 추출 방식 | 2모드 | Standard → TotalWar | 수 분 |
+| L3 Crawler | 라운드 | 1~3회 | 적응형 (소규모 사이트 1회, 대규모 3회) | 수십 분 |
+| L4 Pipeline | 전체 재시작 | 3회 | 실패 사이트만 재실행 | 수 시간 |
+| **합계** | | **5×2×3×3 = 90** | + Never-Abandon 추가 패스 | |
+
+**5-Worker 병렬 실행**: ThreadPoolExecutor로 5개 사이트 동시 크롤링. SiteDeadline(최대 900초)으로 느린 사이트가 다른 사이트를 차단하지 않습니다.
+
+**3-Level 중복 제거**: URL 정규화(쿼리 파라미터 제거) → 제목 Jaccard 유사도(>0.8) → SimHash 본문 지문(hamming distance ≤ 3)
+
+### NLP 분석 파이프라인 (Workflow A — Stage 1~8)
+
+56개 분석 기법을 8단계로 적용합니다. 4,230건 기사에 약 73분 소요.
+
+| Stage | 이름 | 핵심 기법 | 모델/라이브러리 | 시간 |
+|-------|------|----------|--------------|------|
+| **1** | 전처리 | 형태소 분석 + 언어 감지 | Kiwi(한국어) + spaCy(영어) | 97초 |
+| **2** | 피처 추출 | 384차원 임베딩 + TF-IDF + 다국어 NER | `paraphrase-multilingual-MiniLM` + `Davlan/xlm-roberta-base-ner-hrl` | 822초 |
+| **3** | 기사 분석 | 감성 + 8감정(Plutchik) + STEEPS 분류 + 중요도 | `twitter-roberta` + `mDeBERTa`(다국어 zero-shot) + `BART-MNLI` | 3,234초 |
+| **4** | 집계 | 토픽 모델링 + 엔티티 네트워크 + DTM | BERTopic + HDBSCAN + Louvain | 101초 |
+| **5** | 시계열 | 계절성 분해 + 변화점 탐지 + 버스트 | STL(주기=7일) + PELT + Kleinberg | 37초 |
+| **6** | 교차 분석 | 인과관계 + 주제 연결 + 상관 | Granger(lag=7일) + PCMCI | 90초 |
+| **7** | 신호 분류 | 5-Layer 분류 + Novelty Detection | OOD + Structural + Distribution | 2초 |
+| **8** | 출력 | Parquet 병합 + SQLite FTS5 인덱스 | PyArrow + DuckDB | 1초 |
+
+**다국어 NER**: Davlan/xlm-roberta-base-ner-hrl — 10개 언어 지원(ar/de/en/es/fr/it/lv/nl/pt/zh). 한국어는 cross-lingual transfer로 79% 정확도. "윤석열", "셀트리온", "포항" 등 정확 추출.
+
+**감성 분석**: 영어(cardiffnlp/twitter-roberta) + 한국어(KoBERT + mDeBERTa zero-shot fallback) + 비영어(twitter-xlm-roberta multilingual + mDeBERTa). Neutral 비율 33%(이전 72%에서 개선).
+
+**Plutchik 8감정**: Joy, Trust, Fear, Surprise, Sadness, Anger, Disgust, Anticipation — BART-MNLI zero-shot으로 각 감정의 확률 산출. 레이더 차트로 시각화.
+
+**STEEPS 6분류**: Social, Technology, Economic, Environmental, Political, Security — zero-shot classification으로 기사의 주제 영역 자동 분류.
+
+### 빅데이터 통찰 분석 (Workflow B — M1~M7)
+
+일별 수집 데이터가 축적되면(7~40일 윈도우), 7개 분석 모듈이 교차 분석을 수행합니다.
+
+| 모듈 | 분석 내용 | 핵심 지표 | 미래 예측 활용 |
+|------|----------|----------|-------------|
+| **M1** 교차언어 | 14개 언어 간 정보 비대칭 | JSD divergence, Wasserstein 감성편향, 필터 버블(Jaccard) | 국가 간 인식 차이 → 외교 갈등 선행지표 |
+| **M2** 내러티브 | 프레임 진화 + 정보 흐름 | 변화점 탐지, HHI 음성지배, 정보 흐름 그래프(19,173 엣지) | 여론 조작 탐지, 프로파간다 감지 |
+| **M3** 엔티티 | 궤적 분류 + 숨은 연결 | burst/plateau, Jaccard 연결(1,780쌍), 출현 가속 | 떠오르는 인물/기관 예측, 숨은 관계 발견 |
+| **M4** 시간 패턴 | 전파 속도 + 관심 감쇠 | 캐스케이드, 속도 행렬, 주기성(16개 토픽) | 뉴스 수명 예측, 재발 가능성 판단 |
+| **M5** 지정학 | 양자관계 + 소프트파워 | BRI 지수(414쌍), 갈등/협력 비율, 의제설정력 | 국가 간 관계 악화/개선 실시간 추적 |
+| **M6** 경제 | EPU 불확실성 + 섹터 감성 | 12언어 EPU, 5개 섹터 감성 모멘텀, 내러티브 경제학 | 경제 위기 조기 경보 |
+| **M7** 종합 + 인텔리전스 | 핵심 발견 + 증거 기반 인텔리전스 | 엔티티 프로파일(100개), 양자 긴장(224쌍), 증거 기사(255건), 경보(2건) | **실제 기사와 매칭된 미래 예측 근거** |
+
+### 증거 기반 미래 인텔리전스 (M7 확장)
+
+M7이 자동 생산하는 4개 Parquet — 기사 본문과 분석 결과를 매칭하여 **행동 가능한 인텔리전스**를 제공합니다.
+
+| 산출물 | 내용 | 활용 예시 |
+|--------|------|----------|
+| **entity_profiles.parquet** | 엔티티별 감성 프로파일 (언급수, 감성, 부정비율, 언어/출처 분포) | "Iran: 496건, neg 38%, avg -0.232" → 감성이 -0.4 이하면 군사적 확대 임박 |
+| **pair_tensions.parquet** | 양자관계 긴장 추적 (동시출현, 감성, 대표 기사) | "Iran+Israel: 143건, avg -0.306" → 직접 교전 중. "China+Taiwan: -0.051" → 잠복 |
+| **evidence_articles.parquet** | 토픽별 최우수 증거 기사 (evidence_score 기반 선택) | 의사결정자에게 "이 인사이트의 근거" 즉시 제시 가능 |
+| **risk_alerts.parquet** | 임계점 자동 경보 | EPU>0.4 + 전섹터 negative + burst>80% = 3중 경보 → 위기 대응 |
+
+**경보 임계점** (`data/config/insights.yaml`에서 조정):
+
+| 경보 | 기본값 | 의미 |
+|------|--------|------|
+| crisis_sentiment | -0.40 | 엔티티 쌍 감성 극단 → 군사적 확대 |
+| epu_critical | 0.40 | 경제 불확실성 → 위기 전조 |
+| burst_ratio_chaos | 0.80 | 폭발적 엔티티 80%+ → 카오스 국면 |
+| conflict_ratio | 0.50 | 갈등 양자쌍 50%+ → 글로벌 분극화 |
+
+---
+
 ## 빠른 시작
 
 ### 사전 요구사항

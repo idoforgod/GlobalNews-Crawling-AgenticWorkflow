@@ -95,6 +95,113 @@ M7: Synthesis          핵심 발견 + 증거 기반 인텔리전스
 
 ---
 
+## 0.1 시스템이 하는 일 — 전체 흐름 상세
+
+### 크롤링 (Workflow A — 수집)
+
+112개 국제 뉴스 사이트에서 기사를 자동 수집합니다.
+
+```
+[URL 발견] RSS → Sitemap → DOM (3-Tier 탐색)
+    ↓
+[기사 추출] Trafilatura → CSS Adaptive → Browser Rendering (4단계)
+    ↓
+[중복 제거] URL 정규화 → 제목 유사도 → SimHash (3-Level)
+    ↓
+[저장] data/raw/YYYY-MM-DD/all_articles.jsonl
+```
+
+**핵심 기술**: 4-Level 재시도 시스템으로 최대 90회까지 자동 복구합니다.
+
+| Level | 대상 | 재시도 | 전략 |
+|-------|------|--------|------|
+| L1 NetworkGuard | HTTP 요청 | 5회 | 지수 백오프 (1~60초) |
+| L2 Strategy | 추출 방식 | 2모드 | Standard → TotalWar 에스컬레이션 |
+| L3 Crawler | 크롤링 라운드 | 1~3회 | 사이트 크기별 적응형 (소:1, 중:2, 대:3) |
+| L4 Pipeline | 파이프라인 | 3회 | 전체 사이트 재순회 |
+| **합계** | | **최대 90회** | + Never-Abandon 추가 패스 |
+
+**5-Worker 병렬 실행**: 112개 사이트를 5개 스레드로 동시 크롤링. 사이트별 SiteDeadline(최대 900초)으로 느린 사이트가 빠른 사이트를 차단하지 않습니다.
+
+### NLP 분석 (Workflow A — Stage 1~8)
+
+수집된 기사에 56개 NLP 분석 기법을 적용합니다.
+
+| Stage | 이름 | 핵심 기법 | 산출물 |
+|-------|------|----------|--------|
+| **1** | 전처리 | Kiwi(한국어 형태소) + spaCy(영어 lemma) + 언어 감지 | articles.parquet |
+| **2** | 피처 추출 | SBERT 384차원 임베딩 + TF-IDF + **다국어 NER**(Davlan xlm-roberta) | embeddings/tfidf/ner.parquet |
+| **3** | 기사 분석 | 감성(다국어) + **Plutchik 8감정**(joy/trust/fear/surprise/sadness/anger/disgust/anticipation) + STEEPS 6분류 + 중요도 | article_analysis.parquet |
+| **4** | 집계 | BERTopic+HDBSCAN 토픽 모델링 + Louvain 엔티티 네트워크 + DTM | topics/networks.parquet |
+| **5** | 시계열 | STL 분해(주기=7일) + PELT 변화점 탐지 + Kleinberg 버스트 | timeseries.parquet |
+| **6** | 교차 분석 | Granger 인과관계(lag=7일) + PCMCI + 교차 상관 | cross_analysis.parquet |
+| **7** | 신호 분류 | 5-Layer(Fad/Short/Mid/Long/Singularity) + Novelty Detection | signals.parquet |
+| **8** | 출력 | Parquet 병합 + SQLite FTS5 + DuckDB + checksum | analysis.parquet + index.sqlite |
+
+**감성 분석 모델**: 영어(cardiffnlp/twitter-roberta) + 한국어(KoBERT) + 기타 언어(mDeBERTa zero-shot + twitter-xlm-roberta multilingual). **NER**: Davlan/xlm-roberta-base-ner-hrl (10개 언어 지원).
+
+### 통찰 분석 (Workflow B — 7모듈 + M7 인텔리전스)
+
+수집된 데이터가 축적되면(7~40일 윈도우), 구조적 통찰을 생산합니다.
+
+| 모듈 | 분석 내용 | 핵심 지표 | 미래 예측 활용 |
+|------|----------|----------|-------------|
+| **M1** Cross-Lingual | 14개 언어 간 정보 비대칭 | JSD 비대칭, Wasserstein 감성편향, 필터버블 | 국가 간 인식 차이 → 외교 갈등 선행지표 |
+| **M2** Narrative | 프레임 진화 + 정보 흐름 | 프레임 변화점, HHI 음성지배, 미디어건강도 | 여론 조작 탐지, 프로파간다 감지 |
+| **M3** Entity | 엔티티 궤적 + 숨은 연결 | burst/plateau 분류, Jaccard 연결, 출현가속 | 떠오르는 인물/기관 → 다음 뉴스 주인공 예측 |
+| **M4** Temporal | 정보 전파 속도 + 관심 감쇠 | 캐스케이드, 속도행렬, 주기성 | 뉴스 수명 예측, 재발 가능성 판단 |
+| **M5** Geopolitical | 양자관계 + 소프트파워 | BRI 지수, 갈등/협력 비율, 의제설정력 | 국가 간 관계 악화/개선 추적 |
+| **M6** Economic | EPU 불확실성 + 섹터 감성 | 다국어 EPU, 섹터별 감성 모멘텀, 내러티브 | 경제 위기 조기 경보 |
+| **M7** Synthesis + Intelligence | 종합 리포트 + **증거 기반 인텔리전스** | 엔티티 프로파일, 양자긴장, 증거기사, 경보 | **실제 기사 본문과 매칭된 미래 예측 근거** |
+
+### M7 인텔리전스 — 결과 해석법
+
+M7이 생산하는 4개 Parquet 파일의 활용법:
+
+**1. entity_profiles.parquet** — 엔티티별 미디어 톤 추적
+```
+entity: Iran | mentions: 496 | avg_sentiment: -0.232 | neg: 38% | pos: 1%
+→ 해석: 이란에 대한 글로벌 미디어 톤이 강한 부정. 긍정 1%는 거의 없음.
+→ 활용: avg_sentiment이 -0.4 이하로 떨어지면 군사적 확대 임박 신호.
+```
+
+**2. pair_tensions.parquet** — 양자관계 긴장 추적
+```
+Iran+Israel: 143건 동시출현 | avg_sentiment: -0.306
+Trump+Iran: 310건 | avg: -0.236
+China+Taiwan: 44건 | avg: -0.051 (잠복 상태)
+→ 해석: Iran+Israel이 가장 부정적. China+Taiwan은 아직 잠복.
+→ 활용: China+Taiwan이 -0.15 이하면 동아시아 긴장 에스컬레이션 시작.
+```
+
+**3. evidence_articles.parquet** — 증거 기사 매칭
+```
+topic: iran trump israel | evidence_score: 0.87
+title: "미군, 이란 하르그섬 군시설 공격" (매일경제)
+body: "미군이 이란의 최대 원유 수출 터미널인 하르그섬..."
+→ 해석: 인사이트의 실제 근거가 되는 기사. 추상적 수치가 아닌 구체적 증거.
+→ 활용: 의사결정자에게 "이 데이터의 근거가 뭐냐"는 질문에 즉시 답변 가능.
+```
+
+**4. risk_alerts.parquet** — 임계점 경보
+```
+type: sector_all_negative | triggered: True
+→ 해석: 모든 경제 섹터가 부정적 — 전면적 risk-off 국면.
+→ 활용: EPU>0.4 + 전섹터 negative + burst>80% = 3중 경보 발동 시 위기 대응 시작.
+```
+
+**경보 임계점** (insights.yaml에서 조정 가능):
+
+| 경보 유형 | 임계점 | 의미 |
+|----------|--------|------|
+| crisis_sentiment | < -0.40 | 엔티티 쌍 감성이 극도로 부정 → 군사적 확대 |
+| epu_critical | > 0.40 | 경제 불확실성 임계 → 경제 위기 전조 |
+| burst_ratio_chaos | > 0.80 | burst 엔티티 80% 초과 → 카오스 국면 |
+| conflict_ratio | > 0.50 | 갈등 양자쌍 50% 초과 → 글로벌 분극화 |
+| blind_spot_drop | > 0.70 | 기사 수 70% 급감 → 관심 사각지대 (미탐지 위험) |
+
+---
+
 ## 1. 설치 및 초기 설정
 
 ### 1.1 필수 환경
