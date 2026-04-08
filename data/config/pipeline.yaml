@@ -21,6 +21,12 @@ pipeline:
     parquet_compression_level: 3    # ZSTD compression level
     batch_size_default: 500         # Default batch size for article processing
 
+  crawl:
+    total_budget_seconds: 14400     # 4 hours max for crawl phase (overrides constants.py)
+    sufficient_threshold: 0.3       # 30% of daily_article_estimate = "good enough"
+    diminishing_threshold: 0.02     # extra pass adds < 2% → stop loop
+    sitemap_max_child_files: 50     # cap child sitemaps per index
+
   stages:
     # =========================================================================
     # Stage 1: Preprocessing

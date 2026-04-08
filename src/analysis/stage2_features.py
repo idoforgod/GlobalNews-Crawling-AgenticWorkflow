@@ -876,11 +876,18 @@ class NERExtractor:
         """
         # Try multilingual NER pipeline
         try:
-            from transformers import pipeline as hf_pipeline
+            from transformers import pipeline as hf_pipeline, AutoTokenizer
             logger.info("loading_ner_model", model=self._config.ner_model_name)
+            # P1 fix: use_fast=False prevents transformers 4.45+ tokenizer
+            # conversion bug ('NoneType' has no attribute 'endswith')
+            # for XLM-RoBERTa models with sentencepiece vocab.
+            _tokenizer = AutoTokenizer.from_pretrained(
+                self._config.ner_model_name, use_fast=False,
+            )
             self._pipeline = hf_pipeline(
                 "ner",
                 model=self._config.ner_model_name,
+                tokenizer=_tokenizer,
                 aggregation_strategy="simple",
                 device=-1,  # CPU -- safe default for M2 Pro
             )

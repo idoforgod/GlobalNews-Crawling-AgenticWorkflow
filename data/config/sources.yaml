@@ -1680,7 +1680,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.elmundo.es/feed
+      rss_url: https://e00-elmundo.uecdn.es/rss/portada.xml
       sitemap_url: https://www.elmundo.es/sitemap.xml
       rate_limit_seconds: 3
       max_requests_per_hour: 120
@@ -2291,11 +2291,10 @@ sources:
     group: J
     region: MN
     crawl:
-      primary_method: rss
-      fallback_methods:
-      - dom
-      rss_url: https://mongolia.gogo.mn/feed
-      sitemap_url: https://mongolia.gogo.mn/sitemap.xml
+      primary_method: dom
+      fallback_methods: []
+      rss_url: null
+      sitemap_url: null
       rate_limit_seconds: 2
       max_requests_per_hour: 200
       jitter_seconds: 0
@@ -3406,10 +3405,9 @@ sources:
     crawl:
       primary_method: rss
       fallback_methods:
-      - sitemap
       - dom
       rss_url: https://n1info.ba/english/feed/
-      sitemap_url: /sitemap.xml
+      sitemap_url: null
       rate_limit_seconds: 10
       crawl_delay_mandatory: null
       max_requests_per_hour: 360
@@ -3483,12 +3481,12 @@ sources:
       max_requests_per_hour: 720
       jitter_seconds: 0
     anti_block:
-      ua_tier: 1
-      default_escalation_tier: 1
-      max_escalation_tier: 3
+      ua_tier: 2
+      default_escalation_tier: 2
+      max_escalation_tier: 5
       requires_proxy: false
       proxy_region: null
-      bot_block_level: LOW
+      bot_block_level: HIGH
     extraction:
       paywall_type: none
       title_only: false
@@ -3551,12 +3549,12 @@ sources:
       max_requests_per_hour: 360
       jitter_seconds: 3
     anti_block:
-      ua_tier: 1
-      default_escalation_tier: 1
-      max_escalation_tier: 3
+      ua_tier: 2
+      default_escalation_tier: 2
+      max_escalation_tier: 5
       requires_proxy: false
       proxy_region: null
-      bot_block_level: LOW
+      bot_block_level: HIGH
     extraction:
       paywall_type: none
       title_only: false
@@ -3608,12 +3606,12 @@ sources:
     language: en
     group: G
     crawl:
-      primary_method: rss
+      primary_method: dom
       fallback_methods:
-      - sitemap
-      - dom
+      - rss
       rss_url: https://www.trtworld.com/feed/rss.xml
-      sitemap_url: /sitemap.xml
+      sitemap_url: null
+      article_link_css: "a[href*='/article/']"
       rate_limit_seconds: 5
       crawl_delay_mandatory: null
       max_requests_per_hour: 720

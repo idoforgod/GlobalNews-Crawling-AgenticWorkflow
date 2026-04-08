@@ -111,6 +111,31 @@ DISCOVERY_BYPASS_MAX_ATTEMPTS = 5
 # while capping worst-case to ~5h.
 MULTI_PASS_MAX_EXTRA = 5
 
+# ── Crawl Termination Thresholds ──
+# D-7: CRAWL_SUFFICIENT_THRESHOLD is referenced in:
+#   1. pipeline.py _get_incomplete_sites() — converged判定
+#   2. pipeline.py _crawl_site_with_retry() — sufficient判定
+# Change both when modifying this value.
+CRAWL_SUFFICIENT_THRESHOLD = 0.3  # 30% of daily_article_estimate = "good enough"
+
+# P1: Valid bot_block_level values — enforced at config load and runtime.
+# D-7: referenced in retry_manager.get_adaptive_max_rounds() and preflight_check.py.
+VALID_BOT_BLOCK_LEVELS = frozenset({"LOW", "MEDIUM", "HIGH"})
+
+# Sitemap index child file cap — prevents sites with 500+ XML files
+# (e.g. n1info_ba) from spending hours scanning the entire archive.
+SITEMAP_MAX_CHILD_FILES = 50
+
+# Total time budget for the crawl phase (seconds).
+# After this, Never-Abandon loop terminates and analysis begins.
+# Configurable via pipeline.yaml `crawl.total_budget_seconds`.
+CRAWL_TOTAL_BUDGET_SECONDS = 4 * 3600  # 4 hours
+
+# Diminishing returns: if a Never-Abandon extra pass adds fewer than
+# this fraction of new articles relative to the previous total, stop.
+CRAWL_DIMINISHING_THRESHOLD = 0.02  # 2%
+CRAWL_DIMINISHING_MIN_ARTICLES = 5   # absolute floor
+
 # Bypass state persistence — cross-crawl learning SOT
 BYPASS_STATE_PATH = DATA_CONFIG_DIR / "bypass_state.json"
 
@@ -289,8 +314,10 @@ INSIGHT_DEFAULT_WINDOW_DAYS = 30
 INSIGHT_MIN_WINDOW_DAYS = 7
 INSIGHT_MAX_WINDOW_DAYS = 365
 
-# Minimum data coverage ratio within window (70% = at least 21/30 days)
-INSIGHT_MIN_COVERAGE_RATIO = 0.7
+# Minimum data coverage ratio within window.
+# Lowered from 0.7 to 0.45: non-daily crawling creates gaps that make
+# 70% unreachable for 30+ day windows. 45% still requires meaningful data.
+INSIGHT_MIN_COVERAGE_RATIO = 0.45
 
 # Per-module minimum data requirements
 INSIGHT_MIN_LANGUAGES = 3          # M1: minimum language communities

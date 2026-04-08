@@ -3,7 +3,7 @@
 
 version: 1
 default_window_days: 30
-min_coverage_ratio: 0.7
+min_coverage_ratio: 0.45  # Lowered from 0.7: crawling gaps (non-daily collection) make 70% unreachable for 30+ day windows
 
 modules:
   m1_crosslingual: { enabled: true }
@@ -13,3 +13,12 @@ modules:
   m5_geopolitical: { enabled: true }
   m6_economic: { enabled: true }
   m7_synthesis: { enabled: true, mode: template }
+
+# M7 Extension: Evidence-Based Future Intelligence
+# Alert thresholds (override constants.py defaults)
+alert_thresholds:
+  crisis_sentiment: -0.40       # entity-pair avg < this → military escalation warning
+  epu_critical: 0.40            # EPU index > this → economic crisis precursor
+  burst_ratio_chaos: 0.80       # burst ratio > this → chaos phase
+  conflict_ratio_polarization: 0.50  # conflict ratio > this → global polarization
+  blind_spot_drop_ratio: 0.70   # article count drop > this → attention blind spot

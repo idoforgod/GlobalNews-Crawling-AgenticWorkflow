@@ -408,6 +408,7 @@ class Stage3ArticleAnalyzer:
                     "sentiment-analysis",
                     model=KOBERT_MODEL_NAME,
                     tokenizer=KOBERT_MODEL_NAME,
+                    trust_remote_code=True,
                     max_length=MAX_TEXT_LENGTH,
                     truncation=True,
                     device=self._device,
@@ -594,7 +595,29 @@ class Stage3ArticleAnalyzer:
             except Exception as e:
                 logger.warning("multilingual_sentiment_error", error=str(e))
 
-        # VADER fallback (English-biased but better than always-neutral)
+        # mDeBERTa zero-shot fallback (news-domain capable, 100+ languages)
+        # Preferred over VADER because: (1) truly multilingual, (2) not
+        # trained on tweets/reviews, (3) NLI-based = understands context.
+        if self._zeroshot_available and self._zeroshot_pipeline is not None:
+            try:
+                truncated = text[:MAX_TEXT_LENGTH * 2]
+                result = self._zeroshot_pipeline(
+                    truncated,
+                    candidate_labels=["positive", "negative", "neutral"],
+                    hypothesis_template="The sentiment of this text is {}.",
+                )
+                top_label = result["labels"][0]
+                top_score = result["scores"][0]
+                if top_label == "positive":
+                    return ("positive", top_score)
+                elif top_label == "negative":
+                    return ("negative", -top_score)
+                else:
+                    return ("neutral", 0.0)
+            except Exception as e:
+                logger.warning("zeroshot_sentiment_fallback_error", error=str(e))
+
+        # VADER fallback (English-biased, last resort)
         return self._vader_fallback.analyze(text)
 
     def _analyze_sentiment_ko(self, text: str) -> tuple[str, float]:
@@ -636,7 +659,27 @@ class Stage3ArticleAnalyzer:
             except Exception as e:
                 logger.warning("ko_sentiment_inference_error", error=str(e))
 
-        # Korean lexicon fallback
+        # mDeBERTa zero-shot for Korean (better than lexicon for news)
+        if self._zeroshot_available and self._zeroshot_pipeline is not None:
+            try:
+                truncated = text[:MAX_TEXT_LENGTH * 2]
+                result = self._zeroshot_pipeline(
+                    truncated,
+                    candidate_labels=["긍정적", "부정적", "중립적"],
+                    hypothesis_template="이 텍스트의 감성은 {}이다.",
+                )
+                label_map = {"긍정적": "positive", "부정적": "negative", "중립적": "neutral"}
+                top_label = label_map.get(result["labels"][0], "neutral")
+                top_score = result["scores"][0]
+                if top_label == "positive":
+                    return ("positive", top_score)
+                elif top_label == "negative":
+                    return ("negative", -top_score)
+                return ("neutral", 0.0)
+            except Exception:
+                pass
+
+        # Korean lexicon fallback (last resort)
         return self._korean_fallback.analyze(text)
 
     def _analyze_sentiment(

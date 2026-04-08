@@ -167,6 +167,16 @@ def check_config_files(project_dir: Path) -> dict[str, Any]:
             )
             if site_count == 0:
                 issues.append("sources.yaml has 0 sites defined")
+            # P1: validate bot_block_level enum values
+            # D-7: VALID_BOT_BLOCK_LEVELS in constants.py (SOT)
+            _valid_levels = {"LOW", "MEDIUM", "HIGH"}
+            for sid, scfg in sources.items():
+                level = (scfg.get("anti_block") or {}).get("bot_block_level", "LOW") or "LOW"
+                if level.upper() not in _valid_levels:
+                    issues.append(
+                        f"site {sid}: invalid bot_block_level '{level}' "
+                        f"(must be one of {sorted(_valid_levels)})"
+                    )
         except Exception as e:
             issues.append(f"sources.yaml parse error: {e}")
 
