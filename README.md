@@ -1,14 +1,14 @@
 # GlobalNews — 뉴스 크롤링 & 빅데이터 분석 시스템
 
-> **116개 국제 뉴스 사이트 자동 수집 → 56개 NLP 분석 기법 → 5-Layer 신호 분류 → Parquet/SQLite 출력**
+> **112개 국제 뉴스 사이트 자동 수집 → 8단계 NLP 분석 → 7모듈 통찰 분석 → 증거 기반 미래 인텔리전스**
 
 | 항목 | 내용 |
 |------|------|
-| **시스템 유형** | Staged Monolith — Python 3.12 |
-| **산출물** | Parquet (ZSTD) + SQLite (FTS5/vec) + Streamlit 대시보드 |
-| **실행 환경** | MacBook M2 Pro, 48GB RAM, Claude API $0 |
-| **상태** | Production-Ready — 20/20 단계 완료 |
-| **코드 규모** | 171개 Python 모듈, ~48,800 LOC (src) + ~24,700 LOC (tests) |
+| **시스템 유형** | Staged Monolith — Python 3.13, Dual Workflow (A: 수집+분석, B: 통찰+인텔리전스) |
+| **산출물** | Parquet (ZSTD) + SQLite (FTS5) + 증거 기반 인텔리전스 + 리스크 경보 |
+| **실행 환경** | MacBook M2 Pro, 128GB RAM, Claude API $0 |
+| **상태** | Production-Ready — 4,230건/일, 14개 언어, NER 79%, 7,635 findings |
+| **코드 규모** | 183개 Python 모듈, ~55,900 LOC (src) + ~26,000 LOC (tests) |
 
 ---
 
@@ -44,11 +44,20 @@ streamlit run dashboard.py
 ### 주요 CLI 명령
 
 ```bash
-python3 main.py --mode crawl --date 2026-02-27        # 크롤링만
-python3 main.py --mode analyze --all-stages            # 분석만
+python3 main.py --mode crawl --date 2026-04-07        # 크롤링만
+python3 main.py --mode analyze --all-stages            # 분석만 (Stage 1-8)
+python3 main.py --mode insight --window 30             # 통찰 분석 (Workflow B: 7모듈)
 python3 main.py --mode full --dry-run                  # 설정 검증
 python3 main.py --mode status                          # 상태 확인
 python3 main.py --mode crawl --groups A,B              # 특정 그룹만
+```
+
+### Claude Code에서 가장 쉽게 사용하기
+
+```
+"시작하자"     → 전체 파이프라인 자동 실행
+"통찰 분석"    → Workflow B (빅데이터 통찰)
+"상태 확인"    → 현재 결과 조회
 ```
 
 ---

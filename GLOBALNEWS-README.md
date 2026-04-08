@@ -7,9 +7,10 @@
 | **시스템 유형** | Staged Monolith — Python 3.12 |
 | **부모 프레임워크** | [AgenticWorkflow](AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md) (만능줄기세포 — DNA 유전) |
 | **산출물** | Parquet (ZSTD) + SQLite (FTS5/vec) + Streamlit 대시보드 |
-| **실행 환경** | MacBook M2 Pro, 48GB RAM, Claude API $0 |
-| **상태** | Production-Ready — 20/20 단계 완료, Never-Abandon 크롤링 |
-| **코드 규모** | 171개 Python 모듈, ~48,800 LOC (src) + ~24,700 LOC (tests) |
+| **실행 환경** | MacBook M2 Pro, 128GB RAM, Claude API $0 |
+| **상태** | Production-Ready — 20/20 단계 완료, Dual Workflow (A+B), 증거 기반 인텔리전스 |
+| **코드 규모** | 183개 Python 모듈, ~55,900 LOC (src) + ~26,000 LOC (tests) |
+| **최근 성과** | 4,230건/일 수집, 8단계+7모듈 분석 완료 (2026-04-07) |
 
 > **부모-자식 관계**: 이 프로젝트는 AgenticWorkflow 프레임워크(만능줄기세포)로부터 태어난 **자식 시스템**이다.
 > 부모 문서(AGENTICWORKFLOW-*.md)는 방법론·프레임워크를, 자식 문서(GLOBALNEWS-*.md)는 **도메인 고유 시스템**을 기술한다.
@@ -46,12 +47,28 @@ PIPELINE:  8단계 NLP 분석 파이프라인 (56개 분석 기법)
         Stage 7: 신호 분류 (5-Layer + Novelty) ──────→ signals.parquet
         Stage 8: 출력 (Parquet + SQLite + DuckDB) ───→ analysis.parquet + index.sqlite
 
-OUTPUT: data/output/YYYY-MM-DD/
+OUTPUT (Workflow A): data/output/YYYY-MM-DD/
         ├── analysis.parquet   (21 columns, 전체 분석 병합)
         ├── signals.parquet    (12 columns, 5-Layer 신호)
         ├── topics.parquet     (7 columns, 토픽 할당)
         ├── index.sqlite       (FTS5 전문 검색 + vec 의미 검색)
         └── checksums.md5      (무결성 검증)
+
+INSIGHT (Workflow B): data/insights/{run_id}/
+        ├── crosslingual/      (정보 비대칭, 필터 버블, 감성 편향)
+        ├── narrative/         (프레임 진화, 정보 흐름 토폴로지, 미디어 건강도)
+        ├── entity/            (엔티티 궤적, 숨은 연결, 출현 가속)
+        ├── temporal/          (정보 전파 속도, 관심 감쇠, 주기성)
+        ├── geopolitical/      (양자관계, 소프트파워, 갈등-협력 비율)
+        ├── economic/          (EPU 불확실성, 섹터 감성, 내러티브 경제학)
+        └── synthesis/
+            ├── insight_report.md
+            ├── key_findings.json
+            └── intelligence/  (M7 확장: 증거 기반 미래 인텔리전스)
+                ├── entity_profiles.parquet    (엔티티별 감성 프로파일)
+                ├── pair_tensions.parquet      (양자관계 긴장 추적)
+                ├── evidence_articles.parquet  (증거 기사 매칭)
+                └── risk_alerts.parquet        (임계점 경보)
 ```
 
 ---
@@ -99,6 +116,9 @@ python3 main.py --mode crawl --groups A,B --date 2026-02-27
 # 설정 검증 (Dry Run)
 python3 main.py --mode full --dry-run
 
+# 빅데이터 통찰 분석 (Workflow B: 7모듈 + M7 인텔리전스)
+python3 main.py --mode insight --window 30 --end-date 2026-04-07
+
 # 상태 확인
 python3 main.py --mode status
 ```
@@ -127,20 +147,28 @@ streamlit run dashboard.py
 
 ---
 
-## 실제 실행 결과 (2026-02-27)
+## 실제 실행 결과 (2026-04-07, 최신)
 
-| 지표 | 값 |
-|------|-----|
-| 수집 기사 | 1,286건 (raw JSONL) |
-| 처리 기사 | 1,103건 (중복 제거 후) |
-| 성공 소스 | 24/44 사이트 (44-site 설정 기준) |
-| 토픽 발견 | 44개 토픽 |
-| 분석 컬럼 | 21개 (감성, 감정 8차원, STEEPS, 중요도 등) |
-| 출력 크기 | analysis.parquet 2.3MB + index.sqlite 6.0MB |
-| 지원 언어 | 한국어, 영어, 중국어, 일본어, 프랑스어, 독일어, 아랍어, 히브리어 |
+| 지표 | 이전 (2026-02) | 최신 (2026-04-07) | 변화 |
+|------|-------------|-----------------|------|
+| 수집 기사 | 1,286건 | **4,230건** | +229% |
+| 활성 사이트 | 24/44 | **111/112** | +362% |
+| NER 추출률 | 0% | **79~89%** | 다국어 NER 수정 |
+| 감성 neutral | 72% | **33%** | 다국어 감성 수정 |
+| 토픽 발견 | 44개 | **52개** | |
+| 크롤링 시간 | 12.5h+ | **~5h** | -60% |
+| 분석 시간 | 미완료 | **73분** (8단계) | |
+| 통찰 분석 | 없음 | **7모듈, 7,635 findings** | Workflow B 추가 |
+| 인텔리전스 | 없음 | **100 엔티티, 224 양자쌍, 2 경보** | M7 확장 |
+| 지원 언어 | 8개 | **14개** | +6 언어 |
+| 출력 크기 | 8.3MB | **35MB** (Parquet+SQLite) | |
+
+**Workflow A (수집+분석)**: 4,230건 기사 → 8단계 NLP → Parquet/SQLite
+**Workflow B (통찰 분석)**: 52,764건 누적 → 7모듈(교차언어/내러티브/엔티티/시간/지정학/경제/종합) → 27개 지표
+**M7 인텔리전스**: 증거 기반 미래 인텔리전스 — 엔티티 프로파일, 양자관계 긴장, 리스크 경보
 
 **소스별 수집량 (상위 10)**:
-Money Today (630), The Hindu (94), Yonhap (81), Financial Times (79), SCMP (50), Chosun (49), HuffPost (39), People's Daily (39), Bloter (33), Korea Economic Daily (33)
+Aftonbladet (182), ABC Spain (127), Rossiyskaya Gazeta (109), HuffPost (105), Yonhap (101), Money Today (101), El Universal MX (98), La Tercera (97), El Pais (96), Economic Times (85)
 
 ---
 

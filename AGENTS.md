@@ -18,6 +18,8 @@
 
 > `workflow.md`를 만드는 것은 절반이다. **그 안에 기술된 내용이 실제로 동작하는 것**이 최종 목표다.
 
+> **현재 자식 시스템 상태** (2026-04-08): GlobalNews — 112개 사이트 4,230건/일 수집, Dual Workflow(A: 8단계 NLP + B: 7모듈 통찰 + M7 인텔리전스), 14개 언어 다국어 NER(79%)/감성(33% neutral), 증거 기반 미래 인텔리전스 + 리스크 경보 자동 생성. 상세: `GLOBALNEWS-README.md`, `GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md`.
+
 ### 존재 이유 — DNA 유전
 
 AgenticWorkflow는 자식 agentic workflow system을 낳는 **부모 유기체**다. 어떤 도메인의 자식이든, 부모의 전체 게놈을 구조적으로 내장한다.
