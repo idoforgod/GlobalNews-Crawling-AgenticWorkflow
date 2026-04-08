@@ -763,8 +763,21 @@ class SitemapParser:
             source_id, len(child_sitemaps),
         )
 
-        # Parse each child sitemap (most recent first)
+        # Parse each child sitemap (most recent first).
+        # Cap child sitemaps to prevent sites with 500+ XML files
+        # (e.g. n1info_ba) from spending hours scanning the entire archive.
+        # Most news sites have <20 child sitemaps; 50 is generous.
+        from src.config.constants import SITEMAP_MAX_CHILD_FILES
+        MAX_CHILD_SITEMAPS = SITEMAP_MAX_CHILD_FILES
         child_sitemaps.sort(key=lambda x: x[1] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+        if len(child_sitemaps) > MAX_CHILD_SITEMAPS:
+            logger.warning(
+                "sitemap_index_capped source_id=%s total=%s cap=%s "
+                "— scanning most recent %s only",
+                source_id, len(child_sitemaps), MAX_CHILD_SITEMAPS, MAX_CHILD_SITEMAPS,
+            )
+            child_sitemaps = child_sitemaps[:MAX_CHILD_SITEMAPS]
 
         for child_url, _ in child_sitemaps:
             if len(results) >= max_urls:

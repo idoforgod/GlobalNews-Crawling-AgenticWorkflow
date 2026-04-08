@@ -200,3 +200,43 @@ SYNTHESIS_TOP_N = 5
 
 # Minimum absolute change to qualify as "notable" finding
 SYNTHESIS_MIN_CHANGE_THRESHOLD = 0.05
+
+# =============================================================================
+# M7 Extension: Evidence-Based Future Intelligence (FI-1 ~ FI-5)
+# =============================================================================
+
+# Evidence article selection weights (P1 deterministic scoring formula).
+# D-7: referenced in m7_synthesis.py _select_evidence_articles()
+EVIDENCE_SCORE_WEIGHTS = {
+    "importance_score": 0.4,    # Stage 3 importance (source authority + entity density)
+    "sentiment_extremity": 0.3, # abs(sentiment_score) — extreme = more evidence value
+    "source_authority": 0.2,    # sources.yaml tier (inverted: Easy=0.5, Hard=0.8, Extreme=1.0)
+    "body_completeness": 0.1,   # min(word_count / 1000, 1.0) — longer = more complete
+}
+
+# Same-event detection thresholds (P1 deterministic matching).
+# Two articles are "same event" if ALL conditions met:
+SAME_EVENT_THRESHOLDS = {
+    "same_topic_id": True,           # must share BERTopic topic_id
+    "same_date": True,               # must share published_at date
+    "entity_jaccard_min": 0.3,       # NER entity overlap ≥ 30%
+    "embedding_cosine_fallback": 0.80,  # OR: SBERT cosine similarity ≥ 0.80
+}
+
+# Alert thresholds — configurable via insights.yaml override.
+# D-7: referenced in m7_synthesis.py _compute_risk_alerts()
+#       and validate_intelligence.py FI4
+ALERT_THRESHOLDS = {
+    "crisis_sentiment": -0.40,      # entity-pair avg sentiment below this = escalation
+    "epu_critical": 0.40,           # EPU index above this = economic crisis precursor
+    "sector_all_negative": True,    # all sectors negative = risk-off regime
+    "burst_ratio_chaos": 0.80,      # burst/(burst+plateau) above this = chaos phase
+    "conflict_ratio_polarization": 0.50,  # conflict/total above this = global polarization
+    "blind_spot_drop_ratio": 0.70,  # article count drops 70%+ = attention blind spot
+}
+
+# Maximum evidence articles per entity/pair
+EVIDENCE_MAX_ARTICLES = 5
+
+# Minimum articles for an entity to qualify for profiling
+ENTITY_PROFILE_MIN_ARTICLES = 10

@@ -8,7 +8,10 @@
 
 위 파일은 이 프로젝트의 모든 절대 기준, 설계 원칙, 워크플로우 구조를 정의한다.
 상세 아키텍처는 `AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md`를 참조한다.
-설계 결정 이력은 `DECISION-LOG.md`를 참조한다.
+도메인 고유 아키텍처는 `GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md`를 참조한다.
+설계 결정 이력은 `DECISION-LOG.md`를 참조한다 (ADR-067까지 + ADR-068~070 크롤링/NLP/인텔리전스).
+
+> **현재 시스템 상태** (2026-04-08): Dual Workflow 완성. Workflow A(수집+분석 8단계), Workflow B(통찰 7모듈 + M7 인텔리전스 확장). 4,230건/일 수집, 14개 언어, NER 79%, 7,635 findings, 리스크 경보 자동 생성.
 
 ## 유전 설계 (DNA Inheritance)
 

@@ -67,6 +67,13 @@ from src.crawling.retry_manager import (
     StrategyMode,
     L3_MAX_ROUNDS,
     L4_MAX_RESTARTS,
+    get_adaptive_max_rounds,
+)
+from src.config.constants import (
+    CRAWL_SUFFICIENT_THRESHOLD,
+    CRAWL_TOTAL_BUDGET_SECONDS,
+    CRAWL_DIMINISHING_THRESHOLD,
+    CRAWL_DIMINISHING_MIN_ARTICLES,
 )
 from src.crawling.crawl_report import (
     generate_crawl_report,
@@ -551,10 +558,26 @@ class CrawlingPipeline:
         # re-check for incomplete sites and run additional passes.
         # Sites that yielded their deadline get fresh passes with new deadlines.
         # Hard cap: MULTI_PASS_MAX_EXTRA passes to prevent infinite loops.
+        # Fix 3: total_crawl_budget — hard time limit for entire crawl phase.
         from src.config.constants import MULTI_PASS_MAX_EXTRA
-        max_extra_passes = MULTI_PASS_MAX_EXTRA  # 10
+        max_extra_passes = MULTI_PASS_MAX_EXTRA  # 5
         pass_number = L4_MAX_RESTARTS
+        _crawl_start = time.monotonic()
+        # From constants.py (SOT). Override via pipeline.yaml crawl.total_budget_seconds.
+        _total_budget = float(CRAWL_TOTAL_BUDGET_SECONDS)
+        _prev_total_articles = sum(r.extracted_count for r in all_results.values())
+
         for _ in range(max_extra_passes):
+            # Fix 3: check total crawl budget
+            _elapsed = time.monotonic() - _crawl_start
+            if _elapsed > _total_budget:
+                logger.warning(
+                    "crawl_budget_exhausted elapsed=%.0fs budget=%.0fs — "
+                    "proceeding to analysis",
+                    _elapsed, _total_budget,
+                )
+                break
+
             incomplete = self._get_incomplete_sites(target_sites, all_results)
             if not incomplete:
                 logger.info(
@@ -586,6 +609,24 @@ class CrawlingPipeline:
                         all_results[result.source_id] = result
                     elif result.extracted_count > existing.extracted_count:
                         all_results[result.source_id] = result
+
+                # Fix 2: diminishing returns cutoff — if this pass added < 2%
+                # new articles relative to previous total, stop the loop.
+                _current_total = sum(r.extracted_count for r in all_results.values())
+                _new_articles = _current_total - _prev_total_articles
+                _diminishing_threshold = max(
+                    _prev_total_articles * CRAWL_DIMINISHING_THRESHOLD,
+                    CRAWL_DIMINISHING_MIN_ARTICLES,
+                )
+                if _new_articles < _diminishing_threshold and pass_number > L4_MAX_RESTARTS + 1:
+                    logger.info(
+                        "crawl_diminishing_returns pass=%s new=%s threshold=%.0f "
+                        "prev_total=%s — stopping extra passes",
+                        pass_number, _new_articles, _diminishing_threshold, _prev_total_articles,
+                    )
+                    break
+                _prev_total_articles = _current_total
+
             except KeyboardInterrupt:
                 logger.warning("pipeline_interrupted pass=%s", pass_number)
                 raise
@@ -634,8 +675,40 @@ class CrawlingPipeline:
 
             result = results.get(site_id)
 
-            # P1: deadline_yielded means partial crawl — must resume
+            # P1: deadline_yielded means partial crawl — must resume.
+            # BUT: high-velocity sites (e.g. mt with 297/day) will always
+            # have new URLs and always yield their deadline. After collecting
+            # ≥30% of daily estimate, mark complete to prevent infinite loop.
+            # Also: deadline_yielded + 0 articles = site has no extractable
+            # content (e.g. n1info_ba sitemap with 0 date matches). Re-queuing
+            # just wastes another ~1.5h scanning the same 500+ XMLs.
             if result is not None and result.deadline_yielded:
+                # Case 1: yielded but found nothing — don't re-queue
+                if result.extracted_count == 0:
+                    logger.info(
+                        "deadline_yielded_zero_articles site_id=%s "
+                        "discovered=%s — marking complete (no content)",
+                        site_id, result.discovered_urls,
+                    )
+                    self._crawl_state.mark_site_complete(site_id)
+                    continue
+                # Case 2: yielded with sufficient articles — converged
+                # D-7: CRAWL_SUFFICIENT_THRESHOLD from constants.py (SOT)
+                # Cross-ref: _crawl_site_with_retry() finalization block
+                _daily_est = target_sites[site_id].get(
+                    "meta", {},
+                ).get("daily_article_estimate", 0)
+                if (
+                    _daily_est > 0
+                    and result.extracted_count >= _daily_est * CRAWL_SUFFICIENT_THRESHOLD
+                ):
+                    logger.info(
+                        "deadline_yielded_but_converged site_id=%s "
+                        "extracted=%s estimate=%s — skipping re-queue",
+                        site_id, result.extracted_count, _daily_est,
+                    )
+                    self._crawl_state.mark_site_complete(site_id)
+                    continue
                 incomplete.append(site_id)
                 continue
 
@@ -643,6 +716,21 @@ class CrawlingPipeline:
             if result is None:
                 incomplete.append(site_id)
             elif result.extracted_count == 0 and result.errors:
+                # P1: permanent block detection via structured counts
+                # (not string matching). block_count is incremented at
+                # error creation point in _crawl_urls — deterministic.
+                if (
+                    result.block_count > 0
+                    and result.failed_count > 0
+                    and result.block_count >= result.failed_count * 0.5
+                ):
+                    logger.info(
+                        "permanent_block_skip site_id=%s blocks=%s/%s "
+                        "— marking complete to avoid infinite retry",
+                        site_id, result.block_count, result.failed_count,
+                    )
+                    self._crawl_state.mark_site_complete(site_id)
+                    continue
                 # Had errors but no articles — needs retry
                 incomplete.append(site_id)
 
@@ -1358,10 +1446,13 @@ class CrawlingPipeline:
             jitter_seconds=jitter,
         )
 
+        # Adaptive rounds from retry_manager (SOT for round count logic).
+        _max_rounds = get_adaptive_max_rounds(site_cfg)
+
         # Level 3: Crawler rounds
         assert self._retry_manager is not None
 
-        for round_num in range(1, L3_MAX_ROUNDS + 1):
+        for round_num in range(1, _max_rounds + 1):
             # Cooperative deadline check at round boundary — yield to other sites.
             # P1: deadline_yielded flag prevents false completion marking.
             if deadline is not None and deadline.expired:
@@ -1400,6 +1491,12 @@ class CrawlingPipeline:
                     "all %s URLs already seen, site complete",
                     site_id, round_num, len(discovered),
                 )
+                # P1 fix: mark complete even with 0 extracted articles.
+                # "All URLs already seen" means the site has been fully
+                # explored — re-queuing it in Never-Abandon just wastes
+                # hours re-scanning the same sitemap (e.g. n1info_ba 500+ XMLs).
+                assert self._crawl_state is not None
+                self._crawl_state.mark_site_complete(site_id)
                 break  # Intentional: all discovered URLs processed = site genuinely done
 
             result.discovered_urls = max(result.discovered_urls, len(discovered))
@@ -1468,11 +1565,12 @@ class CrawlingPipeline:
         # on rate-limited sites that will just yield again. Mark complete to
         # avoid infinite incomplete loops across restarts.
         assert self._crawl_state is not None
-        _sufficient_threshold = 0.3  # 30% of daily estimate = "good enough"
+        # D-7: CRAWL_SUFFICIENT_THRESHOLD from constants.py (SOT)
+        # Cross-ref: _get_incomplete_sites() converged判定
         _daily_est = site_cfg.get("meta", {}).get("daily_article_estimate", 0)
         _is_sufficient = (
             _daily_est > 0
-            and result.extracted_count >= _daily_est * _sufficient_threshold
+            and result.extracted_count >= _daily_est * CRAWL_SUFFICIENT_THRESHOLD
         )
         if result.extracted_count > 0 and (not result.deadline_yielded or _is_sufficient):
             if result.deadline_yielded and _is_sufficient:
@@ -1480,7 +1578,7 @@ class CrawlingPipeline:
                     "deadline_yielded_but_sufficient site_id=%s extracted=%s "
                     "estimate=%s threshold=%.0f%% — marking complete",
                     site_id, result.extracted_count, _daily_est,
-                    _sufficient_threshold * 100,
+                    CRAWL_SUFFICIENT_THRESHOLD * 100,
                 )
             self._crawl_state.mark_site_complete(site_id)
         self._crawl_state.save()
@@ -2240,6 +2338,12 @@ class CrawlingPipeline:
                             continue
                 result.failed_count += 1
                 result.errors.append(f"Network: {url_obj.url}: {e}")
+                # P1: structured error count at creation point.
+                # NetworkError with HTTP 403/451 = permanent block (not transient).
+                if e.status_code in (403, 451):
+                    result.block_count += 1
+                else:
+                    result.network_error_count += 1
                 self._retry_manager.handle_url_failure(
                     site_id, url_obj.url,
                     error_type="NetworkError", error_msg=str(e),
@@ -2276,6 +2380,8 @@ class CrawlingPipeline:
                 result.failed_count += 1
                 result.tier_used = max(result.tier_used, 2)
                 result.errors.append(f"Blocked: {url_obj.url}: {e}")
+                # P1: structured error count at creation point
+                result.block_count += 1
                 self._retry_manager.handle_url_failure(
                     site_id, url_obj.url,
                     error_type="BlockDetectedError", error_msg=str(e),

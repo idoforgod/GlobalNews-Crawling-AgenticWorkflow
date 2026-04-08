@@ -116,7 +116,7 @@ GlobalNews-Crawling-AgenticWorkflow/
 ├── src/                                   ← [자식] 핵심 소스 (~55,900 LOC)
 │   ├── crawling/                          (Workflow A: 116개 어댑터 + 안티블록 + DynamicBypassEngine)
 │   ├── analysis/                          (Workflow A: 8단계 NLP 파이프라인)
-│   ├── insights/                          (Workflow B: 7개 모듈 M1-M7, 27개 지표, ~7,100 LOC)
+│   ├── insights/                          (Workflow B: 7개 모듈 M1-M7 + M7 인텔리전스 확장, 27+4 지표, ~7,800 LOC)
 │   ├── storage/                           (Parquet ZSTD + SQLite FTS5/vec)
 │   └── utils/                             (로깅, 설정, 에러 처리)
 ├── tests/                                 ← 3계층 테스트 (unit, integration, structural)

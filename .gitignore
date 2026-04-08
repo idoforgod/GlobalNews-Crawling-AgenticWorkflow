@@ -1,7 +1,6 @@
 .DS_Store
 __pycache__/
 *.pdf
-!coding-resource/*.pdf
 
 # Context Preservation System — session-specific runtime data
 .claude/context-snapshots/
@@ -76,3 +75,49 @@ Thumbs.db
 .pytest_cache/
 htmlcov/
 .coverage
+
+# =============================================================================
+# Security & Privacy — 개인정보/시크릿 보호
+# =============================================================================
+
+# Firebase
+firebase-debug.log
+firebase*.json
+.firebaserc
+
+# Playwright MCP (local browser state, cookies, sessions)
+.playwright-mcp/
+
+# Claude runtime locks (session-specific, not shared)
+.claude/scheduled_tasks.lock
+.claude/state.yaml.lock
+
+# SQLite databases (runtime-generated, may contain crawled content)
+data/dedup.sqlite
+data/dedup.sqlite-shm
+data/dedup.sqlite-wal
+*.sqlite-shm
+*.sqlite-wal
+
+# Insight pipeline outputs (large, runtime-generated)
+data/insights/
+
+# Runtime reports (generated during pipeline execution)
+data/reports/
+
+# Personal coding resources
+coding-resource/
+
+# Secrets and credentials (belt-and-suspenders with .env above)
+*.secret
+*.credentials
+*_secret.json
+*_credentials.json
+service-account*.json
+oauth*.json
+
+# SSH keys (should never be in project)
+*.pem
+*.key
+id_rsa*
+id_ed25519*

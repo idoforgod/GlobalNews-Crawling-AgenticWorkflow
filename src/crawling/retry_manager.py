@@ -62,6 +62,42 @@ L2_STRATEGY_COUNT = 2  # Standard + TotalWar
 L3_MAX_ROUNDS = 3
 L3_ROUND_DELAYS = [30.0, 60.0, 120.0]  # seconds between rounds
 
+
+def get_adaptive_max_rounds(site_cfg: dict) -> int:
+    """Return site-specific max rounds based on profile.
+
+    Small sites (≤10 articles/day, LOW block) get 1 round.
+    Medium sites (≤50) get 2 rounds. Large or HIGH-block sites get full 3.
+    This prevents wasting time on multi-round retries for sites that
+    will never yield enough URLs to justify the cost.
+
+    Args:
+        site_cfg: Site configuration dict from sources.yaml.
+
+    Returns:
+        Adaptive max rounds (1, 2, or L3_MAX_ROUNDS).
+    """
+    from src.config.constants import VALID_BOT_BLOCK_LEVELS
+
+    daily_est = (site_cfg.get("meta") or {}).get("daily_article_estimate", 0) or 0
+    bot_block = ((site_cfg.get("anti_block") or {}).get("bot_block_level", "LOW") or "LOW").upper()
+
+    # P1: validate bot_block_level against enum — no free-form strings
+    if bot_block not in VALID_BOT_BLOCK_LEVELS:
+        logger.warning(
+            "invalid_bot_block_level value=%s — defaulting to LOW", bot_block,
+        )
+        bot_block = "LOW"
+
+    # HIGH bot-block sites always get full rounds for escalation room
+    if bot_block == "HIGH":
+        return L3_MAX_ROUNDS
+    if daily_est <= 10:
+        return 1
+    if daily_est <= 50:
+        return 2
+    return L3_MAX_ROUNDS
+
 # Level 4: Pipeline restarts
 L4_MAX_RESTARTS = 3
 L4_RESTART_DELAYS = [60.0, 120.0, 300.0]  # seconds between restarts

@@ -197,3 +197,7 @@ class CrawlResult:
     tier_used: int = 1
     errors: list[str] = field(default_factory=list)
     deadline_yielded: bool = False
+    # P1 structured error counts — eliminates string-matching hallucination.
+    # Incremented at error creation point (pipeline._crawl_urls), not at judgment point.
+    block_count: int = 0       # HTTP 403/451 — permanent bot blocks
+    network_error_count: int = 0  # timeout/connection — transient failures

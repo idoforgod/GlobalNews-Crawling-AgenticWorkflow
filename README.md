@@ -1,239 +1,297 @@
-# GlobalNews — 뉴스 크롤링 & 빅데이터 분석 시스템
+# GlobalNews — Global News Crawling & Big Data Analysis System
 
-> **116개 국제 뉴스 사이트 자동 수집 → 56개 NLP 분석 기법 → 5-Layer 신호 분류 → Parquet/SQLite 출력**
+> **112 international news sites, 14 languages, 4,230+ articles/day**
+> **8-stage NLP pipeline + 7-module insight analytics + evidence-based future intelligence**
 
-| 항목 | 내용 |
-|------|------|
-| **시스템 유형** | Staged Monolith — Python 3.12 |
-| **산출물** | Parquet (ZSTD) + SQLite (FTS5/vec) + Streamlit 대시보드 |
-| **실행 환경** | MacBook M2 Pro, 48GB RAM, Claude API $0 |
-| **상태** | Production-Ready — 20/20 단계 완료 |
-| **코드 규모** | 171개 Python 모듈, ~48,800 LOC (src) + ~24,700 LOC (tests) |
-
----
-
-## 부모-자식 관계
-
-이 프로젝트는 [AgenticWorkflow](AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md) 프레임워크(만능줄기세포)로부터 태어난 **자식 시스템**이다.
-
-- **부모 문서** (`AGENTICWORKFLOW-*.md`): 방법론, 프레임워크, DNA 유전 철학
-- **자식 문서** (`GLOBALNEWS-*.md`): 도메인 고유 아키텍처, 운영 가이드
-
-이 분리는 자식 시스템이 **독립적으로 이해·운영**될 수 있게 한다.
+| | |
+|---|---|
+| **What it does** | Crawls 112 news sites daily, runs 56 NLP techniques, produces geopolitical/economic/entity intelligence with risk alerts |
+| **Output** | Parquet (ZSTD) + SQLite (FTS5) + Evidence-based intelligence + Automated risk alerts |
+| **Languages** | English, Korean, Spanish, German, Swedish, Japanese, Russian, Italian, Portuguese, Polish, Czech, French, Norwegian, Mongolian |
+| **Performance** | 4,230 articles/day, ~5h crawling, ~73min analysis, NER accuracy 79%, 7,635 insight findings |
+| **Stack** | Python 3.13, SBERT, BERTopic, spaCy, Kiwi, Davlan XLM-RoBERTa, mDeBERTa, PyArrow, DuckDB |
+| **Framework** | Born from [AgenticWorkflow](AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md) (parent organism — DNA inheritance) |
 
 ---
 
-## 빠른 시작
+## Quick Start
 
 ```bash
-# 1. 의존성 설치
+# 1. Clone and setup
+git clone https://github.com/idoforgod/GlobalNews-Crawling-AgenticWorkflow.git
+cd GlobalNews-Crawling-AgenticWorkflow
+
+# 2. Create venv (Python 3.12-3.13 required, spaCy incompatible with 3.14)
+python3.13 -m venv .venv && source .venv/bin/activate
+
+# 3. Install dependencies
 pip install -r requirements.txt
-playwright install chromium
 python -m spacy download en_core_web_sm
 
-# 2. 환경 검증
-python3 scripts/preflight_check.py --project-dir . --mode full
+# 4. Verify environment
+.venv/bin/python scripts/preflight_check.py --project-dir . --mode full --json
 
-# 3. 전체 파이프라인 실행 (크롤링 + 8단계 분석)
-python3 main.py --mode full --date 2026-02-27
+# 5. Run full pipeline (crawl 112 sites + 8-stage NLP analysis)
+.venv/bin/python main.py --mode full --date $(date +%Y-%m-%d)
 
-# 4. 대시보드
-streamlit run dashboard.py
+# 6. Run insight analytics (7 modules + evidence-based intelligence)
+.venv/bin/python main.py --mode insight --window 30 --end-date $(date +%Y-%m-%d)
 ```
 
-### 주요 CLI 명령
+### Claude Code Users
 
-```bash
-python3 main.py --mode crawl --date 2026-02-27        # 크롤링만
-python3 main.py --mode analyze --all-stages            # 분석만
-python3 main.py --mode full --dry-run                  # 설정 검증
-python3 main.py --mode status                          # 상태 확인
-python3 main.py --mode crawl --groups A,B              # 특정 그룹만
-```
+Just type **"start"** or **"시작하자"** in Claude Code. The system auto-routes to the right mode.
+
+| Say this | What happens |
+|----------|-------------|
+| "시작하자" / "start" | Full pipeline (crawl + analyze) |
+| "통찰 분석" / "run insights" | Workflow B (7-module insight analytics) |
+| "크롤링 해줘" / "crawl" | Crawling only |
+| "상태 확인" / "status" | Show results |
 
 ---
 
-## 시스템 개요
+## What This System Produces
 
-### 116개 뉴스 사이트 (10개 그룹, 14+ 언어)
-
-| 그룹 | 지역 | 사이트 수 | 예시 |
-|------|------|----------|------|
-| A | 한국 주요 일간지 | 5 | 조선, 중앙, 동아, 한겨레, 연합 |
-| B | 한국 경제지 | 4 | 매경, 한경, 파이낸셜, 머니투데이 |
-| C | 한국 니치 | 3 | 노컷, 국민, 오마이 |
-| D | 한국 IT/과학 | 10 | 38North, Bloter, ZDNet, 전자신문, Insight 등 |
-| E | 영어권 | 22 | NYT, FT, WSJ, CNN, Bloomberg, BBC, Guardian 등 |
-| F | 아시아-태평양 | 23 | SCMP, Yomiuri, TheHindu, Inquirer, VNExpress 등 |
-| G | 유럽/중동 | 38 | Spiegel, LeMonde, Corriere, AlJazeera, Haaretz 등 |
-| H | 아프리카 | 4 | AllAfrica, Africanews, TheAfricaReport, Panapress |
-| I | 라틴 아메리카 | 8 | Clarin, Folha, ElMercurio, ElTiempo 등 |
-| J | 러시아/중앙아시아 | 4 | RIA, RG, RBC, GoGo Mongolia |
-
-### 8단계 NLP 분석 파이프라인 (56개 분석 기법)
+### Workflow A: Daily Collection & Analysis (~5 hours)
 
 ```
-Stage 1: 전처리 (Kiwi + spaCy)
-Stage 2: 피처 추출 (SBERT + TF-IDF + NER)
-Stage 3: 기사 분석 (감성 + 감정 + STEEPS)
-Stage 4: 집계 (BERTopic + HDBSCAN + Louvain)
-Stage 5: 시계열 (STL + PELT + Prophet)
-Stage 6: 교차 분석 (Granger + PCMCI)
-Stage 7: 신호 분류 (5-Layer + Novelty)
-Stage 8: 출력 (Parquet + SQLite)
+112 news sites (14 languages)
+    │
+    ▼ Crawling: 4-Level retry (max 90 attempts), 5-worker parallel
+    │           Never-Abandon policy, adaptive rounds, sitemap capping
+    │
+    ▼ 4,230 articles/day (raw JSONL, 16 MB)
+    │
+    ▼ 8-Stage NLP Pipeline (73 minutes):
+    │
+    │  Stage 1: Preprocessing         Kiwi (Korean) + spaCy (English)
+    │  Stage 2: Feature Extraction     SBERT 384-dim + TF-IDF + Multilingual NER
+    │  Stage 3: Article Analysis       Sentiment + Plutchik 8 Emotions + STEEPS
+    │  Stage 4: Aggregation            BERTopic + HDBSCAN + Entity Networks
+    │  Stage 5: Time Series            STL Decomposition + PELT Changepoints
+    │  Stage 6: Cross Analysis         Granger Causality + PCMCI
+    │  Stage 7: Signal Classification  5-Layer (Fad → Singularity)
+    │  Stage 8: Data Output            Parquet + SQLite FTS5 + DuckDB
+    │
+    ▼ Output: data/output/YYYY-MM-DD/
+       ├── analysis.parquet   (7.8 MB, 4,230 rows, 21 columns)
+       ├── topics.parquet     (52 topics)
+       ├── signals.parquet    (5-Layer classification)
+       └── index.sqlite       (27 MB, full-text search)
 ```
 
-### 5-Layer 신호 분류
+### Workflow B: Insight Analytics (~60 seconds)
 
-| Layer | 이름 | 기간 | 특성 |
-|-------|------|------|------|
-| L1 | Fad | < 1주 | 급등-급락 패턴 |
-| L2 | Short-term | 1-4주 | 단기 트렌드 |
-| L3 | Mid-term | 1-6개월 | 구조적 변화 |
-| L4 | Long-term | 6개월+ | 장기 전환 |
-| L5 | Singularity | 12개월+ | 패러다임 전환 (2-of-3 합의 필요) |
+Accumulated data (7-40 day window) is analyzed by 7 modules:
+
+| Module | Analysis | Key Metrics | Future Prediction Use |
+|--------|----------|-------------|----------------------|
+| **M1** Cross-Lingual | Information asymmetry across 14 languages | JSD divergence, Wasserstein sentiment bias, filter bubble index | Cross-national perception gaps → diplomatic conflict precursor |
+| **M2** Narrative | Frame evolution + information flow topology | Changepoint detection, HHI voice dominance, media health | Propaganda detection, opinion manipulation |
+| **M3** Entity | Entity trajectories + hidden connections | Burst/plateau classification, Jaccard links, emergence acceleration | Predict next newsmakers, discover hidden relationships |
+| **M4** Temporal | Information velocity + attention decay | Cascade detection, velocity matrix, cyclicality | News lifecycle prediction, recurrence probability |
+| **M5** Geopolitical | Bilateral relations + soft power | BRI index (414 pairs), conflict/cooperation ratio, agenda-setting | Track relationship deterioration/improvement in real-time |
+| **M6** Economic | EPU uncertainty + sector sentiment | Multilingual EPU (12 languages), 5-sector momentum, narrative economics | Economic crisis early warning |
+| **M7** Synthesis + Intelligence | Key findings + **evidence-based future intelligence** | Entity profiles (100), pair tensions (224), evidence articles (255), risk alerts | **Actionable predictions with article-level evidence** |
+
+### M7 Intelligence — Evidence-Based Outputs
+
+The system automatically matches **raw article content with NLP analysis results** to produce actionable intelligence:
+
+| Output | What It Contains | Example |
+|--------|-----------------|---------|
+| `entity_profiles.parquet` | Per-entity sentiment profile (mentions, sentiment, source distribution) | "Iran: 496 mentions, avg sentiment -0.232, neg 38%" |
+| `pair_tensions.parquet` | Bilateral tension tracking (co-occurrence, sentiment, evidence) | "Iran+Israel: 143 co-occurrences, avg -0.306" |
+| `evidence_articles.parquet` | Best evidence articles per topic (scored by importance + extremity) | Actual article titles, bodies, sources matched to each insight |
+| `risk_alerts.parquet` | Automated threshold-based alerts | "EPU > 0.4 + all sectors negative = economic crisis precursor" |
+
+**Alert Thresholds** (configurable in `data/config/insights.yaml`):
+
+| Alert | Threshold | Meaning |
+|-------|-----------|---------|
+| Crisis Sentiment | < -0.40 | Entity pair sentiment extreme → military escalation |
+| EPU Critical | > 0.40 | Economic uncertainty → crisis precursor |
+| Burst Chaos | > 80% | 80%+ entities in burst mode → chaos phase |
+| Global Polarization | > 50% | Conflict-dominant pairs exceed 50% |
 
 ---
 
-## 프로젝트 구조
+## Latest Results (2026-04-07)
+
+| Metric | Value |
+|--------|-------|
+| Articles collected | **4,230** (16 MB JSONL) |
+| Active sites | **111/112** |
+| Languages | **14** |
+| NER extraction rate | **79% (person), 89% (org), 85% (location)** |
+| Sentiment distribution | Negative 40%, Neutral 33%, Positive 27% |
+| Topics discovered | **52** |
+| Crawl time | **~5 hours** (was 12.5h before optimization) |
+| Analysis time | **73 minutes** (8 stages) |
+| Insight findings | **7,635** |
+| Risk alerts | **2 triggered** (sector_all_negative, EPU warning) |
+| Peak memory | 19.76 GB |
+
+**Top entities**: Iran (4,084), Israel (2,596), US (2,448), Trump (2,431), AI (1,729)
+
+---
+
+## Multilingual NLP Models
+
+| Task | Model | Languages | Accuracy |
+|------|-------|-----------|----------|
+| NER | `Davlan/xlm-roberta-base-ner-hrl` | ar, de, en, es, fr, it, lv, nl, pt, zh + cross-lingual | 79% (Korean via transfer) |
+| Sentiment (EN) | `cardiffnlp/twitter-roberta-base-sentiment-latest` | English | Production |
+| Sentiment (KO) | `monologg/kobert` + mDeBERTa fallback | Korean | Production |
+| Sentiment (Multi) | `twitter-xlm-roberta-base-sentiment-multilingual` + `mDeBERTa-v3-base-mnli-xnli` | 8+ languages | Production |
+| Emotions | `facebook/bart-large-mnli` (zero-shot) | Multilingual | Plutchik 8 dimensions |
+| STEEPS | `MoritzLaurer/mDeBERTa-v3-base-mnli-xnli` (zero-shot) | Multilingual | 6 categories |
+| Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` | 50+ languages | 384-dim |
+| Topics | BERTopic + HDBSCAN | Language-agnostic (embedding-based) | 52 topics |
+
+All models are **automatically downloaded** on first run. No API keys required (Claude API = $0).
+
+---
+
+## Crawling Engine
+
+**4-Level Retry Architecture** — up to 90 automatic recovery attempts per article:
+
+| Level | Target | Retries | Strategy |
+|-------|--------|---------|----------|
+| L1 NetworkGuard | HTTP request | 5x | Exponential backoff 1-60s |
+| L2 Strategy | Extraction mode | 2x | Standard → TotalWar escalation |
+| L3 Crawler | Crawl rounds | 1-3x | Adaptive (small sites: 1, large: 3) |
+| L4 Pipeline | Full restart | 3x | Re-run failed sites only |
+| **Total** | | **5 x 2 x 3 x 3 = 90** | + Never-Abandon extra passes |
+
+**Additional features**:
+- **5-Worker ThreadPoolExecutor**: 5 sites crawled simultaneously
+- **SiteDeadline Fairness Yield**: Max 900s per site, prevents starvation
+- **3-Level Deduplication**: URL normalization → Title Jaccard → SimHash
+- **DynamicBypassEngine**: 7 block types, 12 strategies, 5-tier escalation
+- **Sitemap Capping**: Max 50 child sitemaps to prevent hour-long scans
+
+---
+
+## Project Structure
 
 ```
 GlobalNews-Crawling-AgenticWorkflow/
-├── main.py                      ← CLI 진입점 (crawl/analyze/full/status)
-├── dashboard.py                 ← Streamlit 대시보드 (6개 탭)
+├── main.py                         CLI entry point (crawl/analyze/insight/status)
+├── dashboard.py                    Streamlit dashboard (6 tabs)
 │
-├── src/                         ← 핵심 소스 코드 (171개 모듈, ~48,800 LOC)
-│   ├── crawling/                ← 크롤링 엔진 (116개 어댑터 + 안티블록 + DynamicBypassEngine + 페이월 바이패스 + Never-Abandon Multi-Pass)
-│   ├── analysis/                ← 8단계 NLP 파이프라인
-│   ├── storage/                 ← Parquet + SQLite I/O
-│   └── utils/                   ← 로깅, 설정, 에러 처리
+├── src/                            Core source (183 modules, ~55,900 LOC)
+│   ├── crawling/                   Crawling engine + 116 site adapters
+│   ├── analysis/                   8-stage NLP pipeline (Stage 1-8)
+│   ├── insights/                   Workflow B (M1-M7 + M7 intelligence extension)
+│   ├── storage/                    Parquet + SQLite I/O
+│   ├── config/                     Constants + configuration
+│   └── utils/                      Logging, error handling
 │
-├── config/                      ← 설정 파일
-│   ├── sources.yaml             (116개 사이트)
-│   ├── review-focus.yaml        (단계별 리뷰 집중 영역 — Framework config)
-│   ├── output-structure.yaml    (단계별 산출물 구조 패턴 — Framework config)
-│   └── crontab.txt              (cron 설정 템플릿)
+├── data/config/                    Configuration (tracked)
+│   ├── sources.yaml                112 site definitions (groups A-J)
+│   ├── pipeline.yaml               8-stage pipeline config
+│   └── insights.yaml               Workflow B config + alert thresholds
 │
-├── data/                        ← 날짜별 파티션 데이터
-│   ├── raw/YYYY-MM-DD/          (원시 JSONL)
-│   ├── processed/               (전처리 Parquet)
-│   ├── analysis/                (분석 Parquet)
-│   └── output/YYYY-MM-DD/       (최종 출력: Parquet + SQLite)
+├── data/                           Runtime data (gitignored)
+│   ├── raw/YYYY-MM-DD/             Raw JSONL articles
+│   ├── processed/                  Preprocessed Parquet
+│   ├── features/                   NER, embeddings, TF-IDF
+│   ├── analysis/                   Topics, networks, timeseries
+│   ├── output/YYYY-MM-DD/          Final Parquet + SQLite
+│   └── insights/{run_id}/          Workflow B outputs + intelligence
 │
-├── scripts/                     ← 운영 스크립트 (32개)
-├── tests/                       ← 테스트 (55개 파일, ~2,588 테스트)
+├── scripts/                        Operations scripts (34)
+├── tests/                          Tests (60 files, 2,708 tests)
+├── .claude/                        AI agent infrastructure
+│   ├── agents/                     36 specialized sub-agents
+│   ├── skills/                     6 reusable skills
+│   ├── hooks/scripts/              25 automation hooks (P1 validation, safety)
+│   └── commands/                   7 slash commands
 │
-├── GLOBALNEWS-README.md                       ← 시스템 상세 소개
-├── GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md  ← 설계 철학 + 아키텍처 심층
-├── GLOBALNEWS-USER-MANUAL.md                  ← 운영 가이드 (CLI, 대시보드, 자동화)
-│
-├── AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md  ← [부모] 프레임워크 설계 철학
-├── AGENTICWORKFLOW-USER-MANUAL.md                  ← [부모] 프레임워크 사용 매뉴얼
-├── CLAUDE.md                                       ← [부모] Claude Code 지시서
-├── AGENTS.md                                       ← [부모] AI 에이전트 공통 지시서
-├── soul.md                                         ← [부모] DNA 유전 철학
-└── DECISION-LOG.md                                 ← 설계 결정 로그 (ADR)
+├── GLOBALNEWS-*.md                 [Child] System documentation
+├── AGENTICWORKFLOW-*.md            [Parent] Framework documentation
+├── DECISION-LOG.md                 Architecture Decision Records (ADR-001~070)
+└── soul.md                         DNA inheritance philosophy
 ```
 
 ---
 
-## 실제 실행 결과 (2026-02-27)
+## Reproducibility
 
-| 지표 | 값 |
-|------|-----|
-| 수집 기사 | 1,286건 (raw JSONL) |
-| 처리 기사 | 1,103건 (중복 제거 후) |
-| 성공 소스 | 24/44 사이트 (44-site 설정 기준) |
-| 토픽 발견 | 44개 토픽 |
-| 분석 컬럼 | 21개 (감성, 감정 8차원, STEEPS, 중요도 등) |
-| 출력 크기 | analysis.parquet 2.3MB + index.sqlite 6.0MB |
-| 지원 언어 | 한국어, 영어, 중국어, 일본어, 프랑스어, 독일어, 아랍어, 히브리어 |
+All gitignored files are **automatically regenerated**:
 
----
+| What's gitignored | How to reproduce |
+|-------------------|-----------------|
+| `.venv/` | `python3.13 -m venv .venv && pip install -r requirements.txt` |
+| NLP models | Auto-downloaded on first run (~2 GB, cached in `~/.cache/huggingface/`) |
+| `data/raw/` | Re-run crawling: `main.py --mode crawl` |
+| `data/processed/`, `features/`, `analysis/`, `output/` | Re-run analysis: `main.py --mode analyze` |
+| `data/insights/` | Re-run insights: `main.py --mode insight` |
+| `data/dedup.sqlite` | Auto-created on crawl |
 
-## 자동화 (Cron)
-
-```bash
-# 일일 실행 (매일 02:00)
-0 2 * * * /path/to/scripts/run_daily.sh
-
-# 주간 사이트 점검 (매주 일요일 01:00)
-0 1 * * 0 /path/to/scripts/run_weekly_rescan.sh
-
-# 월간 데이터 아카이빙 (매월 1일 03:00)
-0 3 1 * * /path/to/scripts/archive_old_data.sh
-```
+**Everything needed to reproduce results is in the repository**: source code, configuration, site definitions, pipeline settings, alert thresholds.
 
 ---
 
-## 데이터 쿼리
+## Data Querying
 
 ```python
-# DuckDB
+# DuckDB — instant SQL on Parquet
 import duckdb
-duckdb.sql("SELECT source, sentiment_label, COUNT(*) FROM 'data/output/2026-02-27/analysis.parquet' GROUP BY ALL")
+duckdb.sql("""
+    SELECT source, sentiment_label, COUNT(*) as n
+    FROM 'data/output/2026-04-07/analysis.parquet'
+    GROUP BY ALL ORDER BY n DESC
+""")
 
-# SQLite FTS5
+# SQLite FTS5 — full-text search
 import sqlite3
-conn = sqlite3.connect('data/output/2026-02-27/index.sqlite')
-conn.execute("SELECT * FROM articles_fts WHERE articles_fts MATCH 'AI AND economy'").fetchall()
+conn = sqlite3.connect('data/output/2026-04-07/index.sqlite')
+conn.execute("SELECT * FROM articles_fts WHERE articles_fts MATCH 'Iran AND nuclear'").fetchall()
 
-# Pandas
+# Pandas — analysis
 import pandas as pd
-df = pd.read_parquet('data/output/2026-02-27/analysis.parquet')
+df = pd.read_parquet('data/output/2026-04-07/analysis.parquet')
 df.groupby('topic_label')['sentiment_score'].mean().sort_values()
+
+# Intelligence — entity profiles
+profiles = pd.read_parquet('data/insights/quarterly-2026-Q2/synthesis/intelligence/entity_profiles.parquet')
+profiles.nlargest(10, 'mention_count')[['entity', 'mention_count', 'avg_sentiment', 'neg_ratio']]
+
+# Risk alerts
+alerts = pd.read_parquet('data/insights/quarterly-2026-Q2/synthesis/intelligence/risk_alerts.parquet')
+alerts[alerts['triggered'] == True]
 ```
 
 ---
 
-## DNA 유전 — 부모 프레임워크로부터 물려받은 것
+## Documentation Guide
 
-| DNA 구성요소 | GlobalNews에서의 발현 |
-|-------------|---------------------|
-| 3단계 구조 | Research (4) → Planning (4) → Implementation (12) |
-| SOT 패턴 | `.claude/state.yaml` — Orchestrator만 쓰기 |
-| 5계층 QA + SM5 | L0(a-d) Anti-Skip → Pre-L1 /simplify → L1 Verification → L1.5 pACS → L2 Review(+Focus) + SM5 SOT-Level 강제 |
-| P1 봉쇄 | 19개 결정론적 검증 스크립트 + SM5 gate evidence guard + 353개 P1 Layer 3 테스트 |
-| 전문가 위임 | 32개 전문 서브에이전트, 6개 에이전트 팀 |
-| Safety Hooks | 위험 명령·시크릿·SQL 차단(exit 2) + 시크릿 출력 감지(경고) + TDD 보호 + 예측적 디버깅 |
-| Context Preservation | 스냅샷 + Knowledge Archive + RLM 복원 + Learned Patterns 표면화 + Phase-Aware Compact + Retry Progress Circuit Breaker |
-
-**도메인 고유 변이**: 4-Level 재시도 (90회, Circuit Breaker 무진전 감지 포함), 116-site Adapter Pattern (10 Groups, A-J), DynamicBypassEngine (12전략, 5-Tier, 7 BlockTypes) + Never-Abandon 루프, **SiteDeadline Fairness Yield** (데드라인 만료 시 워커 양보 → 재큐잉 → 최대 `MULTI_PASS_MAX_EXTRA`(10)회 반복, P1 `deadline_yielded` 플래그로 false completion 봉쇄), **CRAWL_NEVER_ABANDON Multi-Pass**, 5-Layer Signal Hierarchy, Date-Partitioned Storage, HQ Gates (4종 Human-step 품질 검증), Paywall Bypass System (BrowserRenderer + AdaptiveExtractor + is_paywall_body 영어/프랑스어 26패턴), SM5 Quality Gate Evidence Guard, P1 사이트 레지스트리 교차 검증
+| Document | Content | Audience |
+|----------|---------|----------|
+| **README.md** (this file) | Project overview, quick start, capabilities | First-time visitors |
+| [GLOBALNEWS-README.md](GLOBALNEWS-README.md) | Detailed system specs, performance data | System evaluators |
+| [GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md](GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md) | Design philosophy, architecture deep-dive | Developers |
+| [GLOBALNEWS-USER-MANUAL.md](GLOBALNEWS-USER-MANUAL.md) | Operations guide, CLI, dashboard, intelligence interpretation | Operators & analysts |
+| [DECISION-LOG.md](DECISION-LOG.md) | Architecture decision records (ADR-001~070) | Architects |
+| [soul.md](soul.md) | DNA inheritance philosophy | Framework users |
 
 ---
 
-## 문서 가이드
-
-### 자식 시스템 (GlobalNews) 문서
-
-| 문서 | 내용 | 대상 |
-|------|------|------|
-| **[README.md](README.md)** (이 문서) | 프로젝트 진입점, 빠른 시작 | 처음 접하는 사람 |
-| [GLOBALNEWS-README.md](GLOBALNEWS-README.md) | 시스템 상세 소개, 실행 결과, 전체 구조 | 시스템 이해 |
-| [GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md](GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md) | 설계 철학, 아키텍처 심층 분석, 선택의 근거 | 설계를 이해하려는 개발자 |
-| [GLOBALNEWS-USER-MANUAL.md](GLOBALNEWS-USER-MANUAL.md) | CLI, 대시보드, 자동화, 트러블슈팅 | 시스템을 운영하는 연구자 |
-
-### 부모 프레임워크 (AgenticWorkflow) 문서
-
-| 문서 | 내용 |
-|------|------|
-| [AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md](AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md) | 프레임워크 설계 철학 |
-| [AGENTICWORKFLOW-USER-MANUAL.md](AGENTICWORKFLOW-USER-MANUAL.md) | 프레임워크 사용 매뉴얼 |
-| [soul.md](soul.md) | DNA 유전 철학 |
-| [DECISION-LOG.md](DECISION-LOG.md) | 설계 결정 로그 (ADR-001~067) |
-
----
-
-## 테스트
+## Tests
 
 ```bash
-pytest                      # 전체 ~2,588 테스트
-pytest -m unit              # 단위 테스트
-pytest -m "not slow"        # NLP 모델 로딩 제외 (빠른 실행)
+pytest                            # All 2,708 tests
+pytest tests/crawling/            # Crawling tests (1,233)
+pytest tests/unit/                # Unit tests
+pytest -m "not slow"              # Skip NLP model loading (fast)
 ```
 
 ---
 
-## 라이선스
+## License
 
-MIT License. 자세한 내용은 [COPYRIGHT.md](COPYRIGHT.md) 참조.
+MIT License. See [COPYRIGHT.md](COPYRIGHT.md).

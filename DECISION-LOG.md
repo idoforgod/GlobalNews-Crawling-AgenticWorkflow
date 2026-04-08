@@ -1012,6 +1012,32 @@
 
 ## 문서 관리
 
+### ADR-068: 크롤링 최적화 — Sitemap 캡핑 + 수확 체감 + 전체 시간 제한 (2026-04-07)
+
+- **맥락**: 크롤링이 12.5시간+ 소요, 분석 미진입. n1info_ba가 500+ sitemap XML을 매 패스 순회 (7.4시간, 0건). Never-Abandon 무한 루프.
+- **결정**: (1) SITEMAP_MAX_CHILD_FILES=50 캡핑, (2) CRAWL_DIMINISHING_THRESHOLD=0.02 수확 체감, (3) CRAWL_TOTAL_BUDGET_SECONDS=4h 전체 제한, (4) 적응형 라운드(get_adaptive_max_rounds), (5) P1 block_count 구조화 에러.
+- **근거**: 단일 사이트가 전체 런타임의 65%를 소비. 모든 상수 constants.py SOT. D-7 교차 참조.
+- **결과**: 12.5h → 5h (60% 단축), 1,812 → 4,230건 (133% 증가).
+- **상태**: Accepted
+
+### ADR-069: 다국어 NLP 모델 수정 — tokenizer 파라미터 2줄 수정 (2026-04-07)
+
+- **맥락**: NER 0%, 감성 72% neutral. Davlan/xlm-roberta NER 모델이 transformers 4.57의 fast tokenizer 변환 버그로 로딩 실패 → spaCy en_core_web_sm fallback. KoBERT가 trust_remote_code 누락으로 실패.
+- **결정**: (1) NER: `use_fast=False` 1줄 추가, (2) KoBERT: `trust_remote_code=True` 1줄 추가, (3) mDeBERTa zero-shot을 비영어 감성 fallback으로 추가.
+- **근거**: 이전에 모델 교체/새 의존성 도입을 여러 번 시도했으나 결과 변화 없었음. 에러 로그 정밀 분석 결과, 파라미터 2줄이 근본 원인. 새 모델/의존성 0개.
+- **결과**: NER 0% → 79%, 감성 neutral 72% → 33%.
+- **상태**: Accepted
+
+### ADR-070: M7 확장 — 증거 기반 미래 인텔리전스 (2026-04-08)
+
+- **맥락**: 대시보드에 수치 그래프만 존재. "이 기사가 무엇에 대한 것인가", "기사들 사이에 어떤 패턴이 있는가"에 답하지 못함. 미래 예측을 위한 증거 기반 인사이트 필요.
+- **결정**: M7(synthesis)에 4개 P1 결정론적 인텔리전스 패널 추가: FI-1 엔티티 프로파일, FI-2 양자관계 긴장, FI-3 증거 기사 매칭, FI-4 리스크 경보. M8 별도 모듈 대신 M7 확장으로 결정 (C4 준수, M7과의 책임 중복 방지).
+- **근거**: (1) C4 제약(Parquet only) 준수 — HTML 대시보드는 별도 명령, (2) P1 결정론적 — EVIDENCE_SCORE_WEIGHTS, ALERT_THRESHOLDS를 constants.py SOT로 등록, (3) 새 모듈 0개 — 기존 M7 확장.
+- **결과**: entity_profiles 100개, pair_tensions 224쌍, evidence_articles 255건, risk_alerts 2건. validate_intelligence.py FI1-FI4 PASS.
+- **상태**: Accepted
+
+---
+
 - **갱신 규칙**: 새로운 `feat:` 커밋이 설계 결정을 포함하면, 해당 ADR을 이 문서에 추가한다.
 - **번호 규칙**: `ADR-NNN` 형식으로 순차 부여. 삭제된 번호는 재사용하지 않는다.
 - **상태 전이**: `Accepted` → `Superseded by ADR-NNN` → `Deprecated` (사유 명시)
