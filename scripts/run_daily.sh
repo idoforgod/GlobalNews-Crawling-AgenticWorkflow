@@ -386,18 +386,6 @@ main() {
     # Step 5: Post-run log rotation
     rotate_logs
 
-    # Step 6: Trigger LLM Wiki ingest (on success only)
-    if [[ ${pipeline_result} -eq 0 ]]; then
-        local wiki_script="/Users/cys/Desktop/CYSjavis/llm-wiki-environmentscanning/scripts/auto-wiki-ingest.sh"
-        if [[ -x "${wiki_script}" ]]; then
-            log_info "Triggering LLM Wiki ingest..."
-            nohup bash "${wiki_script}" >> "${LOG_DIR}/daily/wiki-trigger-$(date +%Y-%m-%d).log" 2>&1 &
-            log_info "LLM Wiki ingest triggered in background (PID: $!)"
-        else
-            log_warn "LLM Wiki ingest script not found or not executable: ${wiki_script}"
-        fi
-    fi
-
     # Step 6.3: Generate W2/W3 narrative reports via existing agents
     # (ADR-081). main.py --mode full runs the pure Python pipeline which
     # bypasses `@analysis-reporter` and `@insight-narrator`. This step wires
@@ -669,6 +657,22 @@ print(f'Weekly map: {meta[\"week_label\"]} | {meta[\"dates_with_data\"]}/{meta[\
             || log_warn "  6.7d: Weekly Future Map failed"
 
         log_info "Step 6.7 done — see ${bd_log}"
+    fi
+
+    # Step 6.8: LLM Wiki ingest — triggered AFTER BigData Engine
+    # (18Q answers + GTI + Signal Portfolio are now ready in data/)
+    # Runs in background so it does not block the exit code.
+    if [[ ${pipeline_result} -eq 0 ]]; then
+        local wiki_script="/Users/cys/Desktop/CYSjavis/llm-wiki-environmentscanning/scripts/auto-wiki-ingest.sh"
+        local wiki_log="${LOG_DIR}/daily/wiki-ingest-${TARGET_DATE}.log"
+        mkdir -p "${LOG_DIR}/daily"
+        if [[ -x "${wiki_script}" ]]; then
+            log_info "Step 6.8: LLM Wiki ingest (background)..."
+            nohup bash "${wiki_script}" >> "${wiki_log}" 2>&1 &
+            log_info "  Wiki ingest triggered (PID: $!) — log: ${wiki_log}"
+        else
+            log_warn "Step 6.8: Wiki ingest script not found or not executable: ${wiki_script}"
+        fi
     fi
 
     # Step 7: Generate daily summary
