@@ -440,6 +440,7 @@ sources:
       max_requests_per_hour: 300
       jitter_seconds: 1
       lookback_hours: 48
+      timezone_offset: 9
       sections:
       - https://www.aitimes.com
     anti_block:

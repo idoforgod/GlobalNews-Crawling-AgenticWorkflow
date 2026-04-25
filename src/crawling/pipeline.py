@@ -1129,7 +1129,8 @@ class CrawlingPipeline:
         crawl_method = "rss"
 
         if full_body and url_obj.body_hint and len(url_obj.body_hint) >= _MIN_RSS_BODY_FOR_EXTRACTION:
-            body = url_obj.body_hint
+            import html as _html
+            body = _html.unescape(url_obj.body_hint)
             is_truncated = False
             crawl_method = "rss_content"
 

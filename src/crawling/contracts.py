@@ -104,8 +104,12 @@ class RawArticle:
         Returns:
             Dictionary suitable for json.dumps serialization.
         """
+        from urllib.parse import urlparse as _urlparse
+        _parsed = _urlparse(self.url)
+        source_domain = _parsed.netloc or ""
         return {
             "url": self.url,
+            "source_domain": source_domain,
             "title": self.title,
             "body": self.body,
             "source_id": self.source_id,

@@ -277,7 +277,9 @@ def _extract_with_trafilatura(html: str, url: str) -> ExtractionResult:
         )
 
         if extracted:
-            result.body = extracted
+            # Unescape HTML entities left by trafilatura (&nbsp; &quot; &rsquo; etc.)
+            import html as _html
+            result.body = _html.unescape(extracted)
             result.extraction_method = "trafilatura"
             result.confidence = 0.8
 
@@ -498,7 +500,8 @@ def _extract_with_arc_fusion(html: str, url: str) -> ExtractionResult:
                         paragraphs.append(f"- {plain}")
 
     if paragraphs:
-        result.body = "\n\n".join(paragraphs)
+        import html as _html
+        result.body = _html.unescape("\n\n".join(paragraphs))
 
     # --- Published date ---
     display_date = data.get("display_date") or data.get("first_publish_date") or ""
