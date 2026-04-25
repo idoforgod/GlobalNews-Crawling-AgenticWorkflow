@@ -6,8 +6,7 @@ Launch:
 Reads Parquet/JSONL/SQLite outputs produced by the 8-stage analysis pipeline.
 Supports daily, monthly, quarterly, and yearly aggregation via sidebar controls.
 
-Tabs: Overview, Topics, Sentiment & Emotions, Time Series, Word Cloud,
-      Article Explorer.
+Tabs: Run Summary, Overview, Topics, Sentiment & Emotions, Word Cloud, 18 Questions.
 """
 
 from __future__ import annotations
@@ -36,112 +35,6 @@ import dashboard_insights as di
 PROJECT_ROOT = Path(__file__).parent
 DATA_DIR = PROJECT_ROOT / "data"
 
-
-# ---- Chart Interpretations loader + renderer (ADR-082) --------------------
-# Loads data/analysis/{date}/interpretations.json and renders a standardized
-# 3-layer card (해석 / 인사이트 / 미래통찰) above existing charts.
-
-
-@st.cache_data(ttl=300)
-def _load_interpretations(date: str) -> dict:
-    """Cached loader for interpretations.json. Returns {} on miss."""
-    p = DATA_DIR / "analysis" / date / "interpretations.json"
-    if not p.exists():
-        return {}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _render_interpretation_card(
-    tab_id: str, interpretations: dict, *, default_expanded: bool = False,
-) -> None:
-    """Render the 3-layer card at the top of a tab.
-
-    Contract: reads data only (no writes). Graceful when entry is missing,
-    FAILED, or empty — surfaces a clear status message + regenerate hint.
-    """
-    tabs = (interpretations or {}).get("tabs") or {}
-    entry = tabs.get(tab_id)
-
-    # Missing: no interpretations generated yet for this tab
-    if not entry:
-        st.info(
-            f"**{tab_id}** 탭의 해석이 아직 생성되지 않았습니다. "
-            f"`python3 scripts/reports/generate_chart_interpretations.py "
-            f"--date {(interpretations or {}).get('date', '{date}')} "
-            f"--only {tab_id}` 또는 `/generate-chart-interpretations` 실행."
-        )
-        return
-
-    status = entry.get("status")
-    if status != "PASS":
-        reason = entry.get("reason") or status or "unknown"
-        st.warning(
-            f"해석 생성 실패 · {status} · {reason}. "
-            "🔁 버튼으로 재생성할 수 있습니다."
-        )
-        if st.button(f"🔁 {tab_id} 재생성", key=f"regen_{tab_id}"):
-            import subprocess as _sub
-            _log = (
-                PROJECT_ROOT / "logs"
-                / f"chart-interp-{tab_id}-{interpretations.get('date','run')}.log"
-            )
-            _log.parent.mkdir(parents=True, exist_ok=True)
-            _proc = _sub.Popen([
-                sys.executable,
-                str(PROJECT_ROOT / "scripts" / "reports"
-                    / "generate_chart_interpretations.py"),
-                "--date", interpretations.get("date", ""),
-                "--only", tab_id,
-                "--project-dir", str(PROJECT_ROOT),
-            ], stdout=_log.open("w"), stderr=_sub.STDOUT)
-            st.toast(f"재생성 시작 (PID {_proc.pid}) — 페이지 새로고침 권장")
-        return
-
-    # PASS path — render 3-layer card
-    with st.expander("📖 해석 · 인사이트 · 미래통찰",
-                     expanded=default_expanded):
-        c1, c2, c3 = st.columns([1.1, 1.5, 1.3])
-
-        with c1:
-            st.markdown("**🌱 해석**")
-            interp_md = (entry.get("interpretation") or {}).get("md", "")
-            if interp_md:
-                st.markdown(interp_md)
-            else:
-                st.caption("_해석 미생성_")
-
-        with c2:
-            st.markdown("**💡 인사이트**")
-            insight = entry.get("insight") or {}
-            for b in insight.get("bullets", []):
-                st.markdown(f"- {b}")
-            refs = insight.get("cross_tab_refs") or []
-            if refs:
-                st.caption(
-                    "교차 참조: " + ", ".join(r for r in refs if r)
-                )
-
-        with c3:
-            st.markdown("**🔮 미래통찰**")
-            future = entry.get("future") or {}
-            for b in future.get("bullets", []):
-                st.markdown(f"- {b}")
-            src_refs = future.get("source_refs") or []
-            for r in src_refs:
-                label = r.get("type") or ""
-                section = r.get("section") or r.get("item_index") or ""
-                st.caption(f"→ {label}: {section}")
-
-        meta = entry.get("metadata") or {}
-        st.caption(
-            f"Generated · attempts {meta.get('attempts', '?')} · "
-            f"{meta.get('elapsed_seconds', '?')}s · "
-            f"model {meta.get('model', '?')} · "
-            f"template {interpretations.get('template_version', '?')}"
-        )
 
 # Sub-directory names that contain date-partitioned outputs
 _DATE_PARTITIONED_DIRS = ("raw", "processed", "features", "analysis", "output")
@@ -252,6 +145,31 @@ def load_multi_jsonl(dates: tuple[str, ...]) -> pd.DataFrame | None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Python/OS 예약 디렉터리 → 한국어 표기 사전
+_SYSTEM_DIR_KO: dict[str, str] = {
+    "__pycache__":  "파이썬 바이트코드 캐시",
+    ".git":         "Git 저장소",
+    ".venv":        "파이썬 가상환경",
+    "node_modules": "Node.js 모듈 캐시",
+    ".DS_Store":    "macOS 시스템 파일",
+    "__init__.py":  "파이썬 패키지 초기화 파일",
+}
+
+def _ko_dirname(name: str) -> str:
+    """파이썬/OS 예약 디렉터리명을 한국어로 변환. 일반 이름은 그대로 반환."""
+    return _SYSTEM_DIR_KO.get(name, name)
+
+def _is_date_dir(name: str) -> bool:
+    """YYYY-MM-DD 형식의 날짜 디렉터리 여부 판별."""
+    return (
+        len(name) == 10
+        and name[4] == "-"
+        and name[7] == "-"
+        and name[:4].isdigit()
+        and name[5:7].isdigit()
+        and name[8:].isdigit()
+    )
 
 
 def format_number(n: int | float) -> str:
@@ -555,29 +473,24 @@ st.caption(f"Period: **{period}** | {_period_label}")
 # ---------------------------------------------------------------------------
 
 (
-    tab_summary, tab_overview, tab_topics, tab_sentiment, tab_timeseries,
-    tab_wordcloud, tab_explorer, tab_w3_insight, tab_dci, tab_newspaper,
+    tab_summary, tab_overview, tab_topics, tab_sentiment,
+    tab_wordcloud, tab_questions,
 ) = st.tabs([
     "📋 Run Summary",
     "📊 Overview",
     "🏷️ Topics",
     "😊 Sentiment & Emotions",
-    "📈 Time Series",
     "☁️ Word Cloud",
-    "🔍 Article Explorer",
-    "🧠 W3 Insight Brief",
-    "🔬 DCI (Independent Workflow)",
-    "📰 Newspaper (WF5)",
+    "🔢 18 Questions",
 ])
 
 # ========================= TAB 0: RUN SUMMARY (integrated) =================
 
 with tab_summary:
-    st.header("📋 Integrated Run Summary — W1 → W2 → W3 → W4 + DCI")
+    st.header("📋 Integrated Run Summary — W1 → W2 → W3 → W4")
     st.caption(
         "Consolidated view of every workflow artifact produced for the "
-        "selected date. Reflects the independent-DCI track alongside the "
-        "W1→W2→W3→W4(Master) chain."
+        "selected date. W1 Crawling → W2 Analysis → W3 Insight → W4 Master."
     )
 
     # ---- Date selector ----
@@ -587,7 +500,7 @@ with tab_summary:
 
     _raw_dir = DATA_DIR / "raw"
     _available_dates = sorted(
-        [p.name for p in _raw_dir.iterdir() if p.is_dir()],
+        [p.name for p in _raw_dir.iterdir() if p.is_dir() and _is_date_dir(p.name)],
         reverse=True,
     ) if _raw_dir.exists() else []
 
@@ -649,144 +562,296 @@ with tab_summary:
         _w4_ko = PROJECT_ROOT / "reports" / "final" / f"integrated-report-{sel_date}.ko.md"
         _w4_ok = _w4_en.exists() and _w4_ko.exists()
 
-        _dci_root = DATA_DIR / "dci" / "runs"
-        _dci_runs_for_date = []
-        if _dci_root.exists():
-            for r in _dci_root.iterdir():
-                if r.is_dir() and sel_date in r.name:
-                    _dci_runs_for_date.append(r)
-        _dci_run = _dci_runs_for_date[0] if _dci_runs_for_date else None
-        _dci_ok = _dci_run is not None and (_dci_run / "final_report.md").exists()
-
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("W1 Crawling", "✅" if _w1_ok else "—", f"{_w1_articles:,} articles")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("W1 Crawling", "✅" if _w1_ok else "—", f"{_w1_articles:,} articles",
+                    help="Workflow 1: 뉴스 크롤링 단계. 116개 사이트에서 기사를 수집하여 data/raw/{date}/all_articles.jsonl 에 저장.")
         col2.metric("W2 Analysis", "✅" if _w2_ok else "—",
-                    f"{(_w2_analysis.stat().st_size // 1024) if _w2_analysis.exists() else 0:,} KB analysis")
+                    f"{(_w2_analysis.stat().st_size // 1024) if _w2_analysis.exists() else 0:,} KB analysis",
+                    help="Workflow 2: NLP 8단계 분석 파이프라인. 전처리→임베딩→감성→토픽→시계열→교차분석→신호분류→저장. Parquet+SQLite 출력.")
         col3.metric("W3 Insight", "✅" if _w3_ok else "—",
-                    _w3_run.name if _w3_run else "not run")
+                    _w3_run.name if _w3_run else "not run",
+                    help="Workflow 3: 7개 모듈(교차언어·서사·엔티티·시간·지정학·경제·종합)로 구조적 통찰 생산. 30일 윈도우 분석.")
         col4.metric("W4 Master", "✅" if _w4_ok else "—",
-                    "EN + KO" if _w4_ok else "not built")
-        col5.metric("DCI", "✅" if _dci_ok else "—",
-                    _dci_run.name if _dci_run else "not run")
+                    "EN + KO" if _w4_ok else "not built",
+                    help="Workflow 4: W1+W2+W3 결과를 통합한 마스터 보고서. 영어 원본 + 한국어 번역 쌍으로 생성.")
 
         st.divider()
 
-        # ==================== 1.5) PUBLIC NARRATIVE 3-LAYER ==============
-        st.subheader("📖 일반인용 3-Layer 해석")
+        # ==================== 1.3) BIG DATA ENGINE STATUS ================
+        st.subheader("🔢 빅데이터 분석 엔진 — 종합 현황")
         st.caption(
-            "해석(Interpretation) · 통찰(Insight) · 미래(Future) — 전문용어 없이, "
-            "모든 숫자는 `facts_pool.json`에서 검증됨."
+            "매일 강제 생산되는 18개 핵심 질문 + GTI + Signal Portfolio + 주간 미래 맵 현황."
         )
 
-        _public_dir = PROJECT_ROOT / "reports" / "public" / sel_date
-        _pub_meta = _public_dir / "generation_metadata.json"
+        _enriched_path = DATA_DIR / "enriched" / sel_date / "articles_enriched.parquet"
+        _answers_dir = DATA_DIR / "answers" / sel_date
+        _gti_path = DATA_DIR / "gti" / sel_date / "gti_daily.json"
 
-        _layers_def = [
-            ("L1", "🌱 해석 (Interpretation)", "interpretation", "이게 무슨 뜻?"),
-            ("L2", "💡 통찰 (Insight)",        "insight",        "무슨 패턴?"),
-            ("L3", "🔮 미래 (Future Insight)", "future",         "앞으로는?"),
-        ]
+        # ── Row A: Enriched Parquet + Q-Engine KPIs ────────────────────
+        _be1, _be2, _be3, _be4, _be5 = st.columns(5)
 
-        if not _pub_meta.exists():
-            st.info(
-                "아직 공개 레이어가 생성되지 않았습니다.  \n"
-                "생성: `/generate-public-layers` 또는 "
-                f"`python3 .claude/hooks/scripts/generate_public_layers.py --date {sel_date}`"
-            )
-            if st.button("🔁 지금 생성 (background)", key="gen_public_now"):
-                import subprocess as _sub
-                _log_path = PROJECT_ROOT / "logs" / f"public-layers-{sel_date}.log"
-                _log_path.parent.mkdir(parents=True, exist_ok=True)
-                _proc = _sub.Popen(
-                    ["python3",
-                     str(PROJECT_ROOT / ".claude" / "hooks" / "scripts"
-                         / "generate_public_layers.py"),
-                     "--date", sel_date, "--project-dir", str(PROJECT_ROOT)],
-                    stdout=_log_path.open("w"), stderr=_sub.STDOUT,
-                )
-                st.success(
-                    f"생성 시작됨 (PID {_proc.pid}). "
-                    f"로그: `{_log_path.relative_to(PROJECT_ROOT)}`  \n"
-                    "페이지를 새로 고치면 진행 상황이 반영됩니다."
-                )
-        else:
+        _enriched_ok = _enriched_path.exists()
+        _enrich_articles = 0
+        _geo_pct = 0.0
+        _noise_pct = 0.0
+        if _enriched_ok:
             try:
-                _meta = _json.loads(_pub_meta.read_text(encoding="utf-8"))
-            except Exception as _exc:
-                _meta = {"status": f"meta parse error: {_exc}", "layers": []}
+                import pandas as _pd
+                _edf = _pd.read_parquet(_enriched_path)
+                _enrich_articles = len(_edf)
+                _geo_pct = (_edf["geo_focus_primary"] != "UNKNOWN").mean() * 100 if "geo_focus_primary" in _edf.columns else 0.0
+                _noise_pct = (_edf["signal_type"] == "NOISE").mean() * 100 if "signal_type" in _edf.columns else 0.0
+            except Exception:
+                pass
 
-            _status_label = _meta.get("status", "?")
-            _status_icon = {
-                "full_pass": "✅",
-                "partial_pass_l3_failed": "⚠️",
-                "failed": "❌",
-            }.get(_status_label, "—")
-            st.caption(
-                f"생성 상태: {_status_icon} **{_status_label}** "
-                f"· 소요 {_meta.get('total_elapsed_seconds', '?')}s "
-                f"· model `{_meta.get('model', '?')}`"
-            )
+        _be1.metric(
+            "Enriched 기사",
+            f"{_enrich_articles:,}" if _enriched_ok else "—",
+            "articles_enriched.parquet",
+            help=(
+                "**articles_enriched.parquet**\n\n"
+                "원시 크롤링 데이터(JSONL)에 NLP 분석 결과를 모두 결합한 "
+                "35개 필드짜리 통합 데이터셋. 18개 핵심 질문 엔진의 단일 입력 소스.\n\n"
+                "포함 정보: STEEPS 분류, Geo Focus, 감성 점수, 신호 유형, "
+                "출처 등급(GLOBAL/NATIONAL/REGIONAL/NICHE), 출처 성향(진보/보수), "
+                "엔티티(인물·기관·국가)."
+            ),
+        )
+        _be2.metric(
+            "Geo 추출률",
+            f"{_geo_pct:.0f}%" if _enriched_ok else "—",
+            "source ≠ focus",
+            help=(
+                "**Geo Focus 추출률**\n\n"
+                "기사가 *게재된 국가*(source_country)와 기사가 *다루는 국가*(geo_focus)를 "
+                "분리해 추출한 비율. 0%이면 모든 기사가 'UNKNOWN'.\n\n"
+                "활용: Q05(국가 감성), Q06(다크 코너), Q07(양국 긴장) 질문의 정확도에 직결.\n\n"
+                "추출 방법: 제목·본문 키워드 매칭 (120개국, 14개 언어 사전) "
+                "+ NER 지명 정규화."
+            ),
+        )
 
-            _per_layer = {e["layer"]: e for e in _meta.get("layers", [])
-                          if "layer" in e}
+        # Q-Engine status
+        _q_ans = _q_deg = _q_ins = 0
+        _q_conf_sum = 0.0
+        if _answers_dir.exists():
+            for _qi in range(1, 19):
+                _qp = _answers_dir / f"q{_qi:02d}.json"
+                if _qp.exists():
+                    try:
+                        _qd = _json.loads(_qp.read_text(encoding="utf-8"))
+                        _st = _qd.get("status", "")
+                        _q_conf_sum += _qd.get("confidence", 0.0)
+                        if _st == "answered":
+                            _q_ans += 1
+                        elif _st == "degraded":
+                            _q_deg += 1
+                        else:
+                            _q_ins += 1
+                    except Exception:
+                        pass
 
-            # 3 cards
-            _cards = st.columns(3)
-            for (_lid, _title, _slug, _question), _col in zip(_layers_def, _cards):
-                _card_entry = _per_layer.get(_lid, {})
-                _card_status = _card_entry.get("status", "—")
-                _md_path = _public_dir / f"{_slug}.md"
-                _ko_path = _public_dir / f"{_slug}.ko.md"
-                with _col:
-                    st.markdown(f"**{_title}**")
-                    st.caption(_question)
-                    _color = {"PASS": "🟢", "FAIL": "🔴"}.get(_card_status, "⚪")
-                    st.markdown(f"{_color} **{_card_status}**")
-                    if _card_status == "PASS":
-                        _size = _md_path.stat().st_size if _md_path.exists() else 0
-                        st.caption(f"{_size:,} bytes · "
-                                   f"{_card_entry.get('attempts', '?')}회 시도")
-                        if _ko_path.exists():
-                            st.caption("🇰🇷 한국어 번역 있음")
+        _q_total = _q_ans + _q_deg + _q_ins
+        _be3.metric(
+            "18문 답변",
+            f"{_q_ans}/18" if _q_total > 0 else "—",
+            f"deg={_q_deg} ins={_q_ins}",
+            help=(
+                "**18개 핵심 질문 응답 현황**\n\n"
+                "매일 강제 생성되는 18개 빅데이터 분석 질문의 응답 상태:\n\n"
+                "- 🟢 **answered**: 충분한 데이터로 완전 응답\n"
+                "- 🟡 **degraded**: 데이터 부족으로 부분 응답 (제한된 신뢰도)\n"
+                "- 🔴 **insufficient**: 최소 데이터 임계값 미달 — 누적 대기 중\n\n"
+                "🔢 탭에서 각 질문별 상세 결과 확인 가능."
+            ),
+        )
+        _be4.metric(
+            "평균 신뢰도",
+            f"{_q_conf_sum/_q_total:.0%}" if _q_total > 0 else "—",
+            help=(
+                "**18문 평균 신뢰도 (Confidence)**\n\n"
+                "각 질문의 신뢰도(0~100%)를 평균한 값. 신뢰도는 "
+                "알고리즘이 해당 답변을 얼마나 확신하는지를 나타내며, "
+                "데이터 양·품질·분석 방법에 따라 결정됩니다.\n\n"
+                "- **데이터 누적 기간**이 길어질수록 자동 상승\n"
+                "- 외부 API 연결(경제지표 등) 시 추가 상승 가능\n"
+                "- 'insufficient_data' 질문은 0%로 평균을 낮춤"
+            ),
+        )
 
-            st.markdown("---")
+        # GTI
+        _gti_score = None
+        _gti_label_val = "—"
+        if _gti_path.exists():
+            try:
+                _gti_data = _json.loads(_gti_path.read_text(encoding="utf-8"))
+                _gti_score = _gti_data.get("gti_score", 0)
+                _gti_label_val = _gti_data.get("gti_label", "—")
+            except Exception:
+                pass
+        _be5.metric(
+            "GTI",
+            f"{_gti_score:.1f}" if _gti_score is not None else "—",
+            _gti_label_val,
+            help=(
+                "**Geopolitical Tension Index (GTI)**\n\n"
+                "0~100 척도의 지정학적 긴장 종합 지수. 세 신호의 가중 합산:\n\n"
+                "- **G1 (40%)** 보도 집중도 편차 — 특정 지역에 보도가 쏠릴수록 ↑\n"
+                "- **G2 (35%)** 핫스팟 감성 — 분쟁 지역 국가의 부정 감성 강도\n"
+                "- **G3 (25%)** 양국 긴장 — 국가 간 긴장 신호 강도\n\n"
+                "등급: 🟢 LOW(<30) · 🟡 MEDIUM(30-60) · 🟠 HIGH(60-80) · 🔴 CRITICAL(>80)"
+            ),
+        )
 
-            # Full-text expanders (EN/KO toggle)
-            _pub_lang = st.radio(
-                "언어 / Language",
-                options=["한국어", "English"],
-                horizontal=True,
-                key="pub_lang_toggle",
-            )
-            for _lid, _title, _slug, _question in _layers_def:
-                _md_path = _public_dir / f"{_slug}.md"
-                _ko_path = _public_dir / f"{_slug}.ko.md"
-                _show_path = _ko_path if _pub_lang == "한국어" and _ko_path.exists() else _md_path
-                if not _show_path.exists():
-                    continue
-                with st.expander(f"{_title} — 본문 ({_show_path.name})",
-                                 expanded=(_lid == "L1")):
-                    st.markdown(_show_path.read_text(encoding="utf-8"))
-
-            # Regenerate button
-            _cols_btn = st.columns([1, 1, 3])
-            with _cols_btn[0]:
-                if st.button("🔁 재생성", key="pub_regen"):
-                    import subprocess as _sub
-                    _log_path = PROJECT_ROOT / "logs" / f"public-layers-{sel_date}.log"
-                    _proc = _sub.Popen(
-                        ["python3",
-                         str(PROJECT_ROOT / ".claude" / "hooks" / "scripts"
-                             / "generate_public_layers.py"),
-                         "--date", sel_date, "--project-dir", str(PROJECT_ROOT)],
-                        stdout=_log_path.open("w"), stderr=_sub.STDOUT,
+        # ── Row B: STEEPS + Signal distribution mini-chart ─────────────
+        if _enriched_ok and _enrich_articles > 0:
+            try:
+                import plotly.express as _px
+                import pandas as _pd
+                _bc1, _bc2 = st.columns(2)
+                with _bc1:
+                    _steeps_counts = _edf["steeps_primary"].value_counts().reset_index()
+                    _steeps_counts.columns = ["STEEPS", "건수"]
+                    _steeps_counts["카테고리"] = _steeps_counts["STEEPS"].map(
+                        lambda s: {"SOC":"👥Social","TEC":"💻Tech","ECO":"💰Econ",
+                                   "ENV":"🌿Env","POL":"🏛️Pol","SEC":"🛡️Sec",
+                                   "SPI":"🙏Spi","CRS":"⚠️Crs"}.get(s, s)
                     )
-                    st.success(f"재생성 시작 (PID {_proc.pid})")
-            with _cols_btn[1]:
-                if st.button("📄 facts_pool 보기", key="pub_facts"):
-                    _facts = _public_dir / "facts_pool.json"
-                    if _facts.exists():
-                        st.json(_json.loads(_facts.read_text(encoding="utf-8")))
+                    _fig_steeps = _px.pie(
+                        _steeps_counts, names="카테고리", values="건수",
+                        title=f"STEEPS 분포 ({sel_date})",
+                        color_discrete_sequence=_px.colors.qualitative.Set3,
+                    )
+                    _fig_steeps.update_layout(height=260, margin=dict(t=40, b=10, l=10, r=10))
+                    _fig_steeps.update_traces(textposition="inside", textinfo="percent+label")
+                    st.plotly_chart(_fig_steeps, use_container_width=True)
+                with _bc2:
+                    _geo_top = (
+                        _edf[_edf["geo_focus_primary"] != "UNKNOWN"]["geo_focus_primary"]
+                        .value_counts().head(10).reset_index()
+                    )
+                    _geo_top.columns = ["국가", "건수"]
+                    if not _geo_top.empty:
+                        _fig_geo = _px.bar(
+                            _geo_top, x="건수", y="국가", orientation="h",
+                            title=f"Geo Focus 상위 10국 ({sel_date})",
+                            color="건수", color_continuous_scale="Blues",
+                        )
+                        _fig_geo.update_layout(
+                            height=260, margin=dict(t=40, b=10, l=60, r=10),
+                            showlegend=False,
+                        )
+                        st.plotly_chart(_fig_geo, use_container_width=True)
+            except Exception as _exc:
+                st.caption(f"차트 생성 실패: {_exc}")
+
+        # ── Row C: 18문 빠른 상태 표 ───────────────────────────────────
+        if _q_total > 0:
+            _q_rows = []
+            _q_meta_label = {
+                "Q01":"버스트 탐지","Q02":"트렌드 추이","Q03":"사건 전후 변화",
+                "Q04":"프레이밍 비교","Q05":"국가 감성","Q06":"다크 코너",
+                "Q07":"양국 긴장","Q08":"약한 신호","Q09":"패러다임 전조",
+                "Q10":"의제 이동","Q11":"의제 선점","Q12":"미디어 편향",
+                "Q13":"언어권 의제","Q14":"보도 격차","Q15":"감성 선행",
+                "Q16":"이슈 인과","Q17":"동시 급증","Q18":"핵심 엔티티",
+            }
+            _status_icon = {"answered":"🟢","degraded":"🟡","insufficient_data":"🔴"}
+            for _qi in range(1, 19):
+                _qid = f"Q{_qi:02d}"
+                _qp = _answers_dir / f"q{_qi:02d}.json"
+                if _qp.exists():
+                    try:
+                        _qd = _json.loads(_qp.read_text(encoding="utf-8"))
+                        _st = _qd.get("status", "")
+                        _q_rows.append({
+                            "ID": _qid,
+                            "질문": _q_meta_label.get(_qid, ""),
+                            "상태": _status_icon.get(_st, "⚪") + " " + _st,
+                            "신뢰도": f"{_qd.get('confidence', 0):.0%}",
+                            "데이터 일수": f"{_qd.get('data_days_available', 0)}일",
+                        })
+                    except Exception:
+                        pass
+            if _q_rows:
+                import pandas as _pd
+                with st.expander("📋 18문 상태 일람표", expanded=False):
+                    st.dataframe(
+                        _pd.DataFrame(_q_rows),
+                        use_container_width=True, hide_index=True,
+                    )
+
+        # ── Row D: Signal Portfolio + GTI 간략 카드 ────────────────────
+        _port_path2 = DATA_DIR / "signal_portfolio.yaml"
+        _wfm_dir2 = PROJECT_ROOT / "reports" / "weekly_future_map"
+
+        _rd1, _rd2, _rd3 = st.columns(3)
+        with _rd1:
+            st.markdown("**📡 Signal Portfolio**")
+            if _port_path2.exists():
+                try:
+                    import yaml as _yaml
+                    _praw = _yaml.safe_load(_port_path2.read_text(encoding="utf-8")) or {}
+                    _psigs = _praw.get("signals", {})
+                    _pwatch = sum(1 for v in _psigs.values() if v.get("status") == "watching")
+                    _pemerg = sum(1 for v in _psigs.values() if v.get("status") == "emerging")
+                    _pconf = sum(1 for v in _psigs.values() if v.get("status") == "confirmed")
+                    st.markdown(
+                        f"총 **{len(_psigs)}**개 신호 추적  \n"
+                        f"🔵 watching: {_pwatch} · 🟡 emerging: {_pemerg} · 🟢 confirmed: {_pconf}  \n"
+                        f"마지막: {_praw.get('last_updated','?')}"
+                    )
+                except Exception:
+                    st.caption("읽기 실패")
+            else:
+                st.caption("— 아직 생성 안 됨")
+        with _rd2:
+            st.markdown("**🌐 GTI 상세**")
+            if _gti_path.exists():
+                try:
+                    _g = _gti_data
+                    _comps = _g.get("components", {})
+                    _dq = _g.get("data_quality", {})
+                    st.markdown(
+                        f"**{_g.get('gti_score',0):.1f}** — {_g.get('gti_label','')}  \n"
+                        f"G1 보도집중: {_comps.get('g1_coverage_skew',0):.1f}  \n"
+                        f"G2 핫스팟: {_comps.get('g2_sentiment_hotspot',0):.1f}  \n"
+                        f"G3 양국긴장: {_comps.get('g3_bilateral_tension',0):.1f}"
+                    )
+                    _q5s = _dq.get("q05_status","—")
+                    _q6s = _dq.get("q06_status","—")
+                    _q7s = _dq.get("q07_status","—")
+                    st.caption(f"입력 품질 — Q05: {_q5s} · Q06: {_q6s} · Q07: {_q7s}")
+                except Exception:
+                    st.caption("읽기 실패")
+            else:
+                st.caption("— GTI 미생성")
+        with _rd3:
+            st.markdown("**🗺️ 주간 미래 맵**")
+            if _wfm_dir2.exists():
+                _wfm_editions2 = sorted(
+                    [p.name for p in _wfm_dir2.iterdir()
+                     if p.is_dir() and not p.name.startswith("__")],
+                    reverse=True,
+                )
+                if _wfm_editions2:
+                    _latest_wfm = _wfm_editions2[0]
+                    _wfm_m = _wfm_dir2 / _latest_wfm / "meta.json"
+                    if _wfm_m.exists():
+                        try:
+                            _wm = _json.loads(_wfm_m.read_text(encoding="utf-8"))
+                            st.markdown(
+                                f"최신: **{_latest_wfm}**  \n"
+                                f"기간: {_wm.get('start_date','')} ~ {_wm.get('end_date','')}  \n"
+                                f"커버리지: {_wm.get('dates_with_data',0)}/{_wm.get('window_days',7)}일  \n"
+                                f"GTI 평균: {_wm.get('gti_avg',0):.1f} — {_wm.get('gti_label','').split()[0]}"
+                            )
+                        except Exception:
+                            st.caption(_latest_wfm)
+                else:
+                    st.caption("— 아직 생성 안 됨")
+            else:
+                st.caption("— 아직 생성 안 됨")
 
         st.divider()
 
@@ -853,13 +918,16 @@ with tab_summary:
                 _topics_df = _pd.read_parquet(_w2_topics)
 
                 k1, k2, k3, k4 = st.columns(4)
-                k1.metric("Articles analyzed", f"{len(_analysis_df):,}")
-                k2.metric("Signals detected", f"{len(_signals_df):,}")
+                k1.metric("Articles analyzed", f"{len(_analysis_df):,}",
+                          help="W2 Stage 3에서 감성·감정·STEEPS 분류가 완료된 기사 수.")
+                k2.metric("Signals detected", f"{len(_signals_df):,}",
+                          help="W2 Stage 7에서 5계층 신호 분류를 통해 탐지된 신호 수 (BREAKING·TREND·WEAK·NOISE).")
                 _topics_unique = (
                     _topics_df["topic_id"].nunique()
                     if "topic_id" in _topics_df.columns else len(_topics_df)
                 )
-                k3.metric("Unique topics", f"{_topics_unique:,}")
+                k3.metric("Unique topics", f"{_topics_unique:,}",
+                          help="W2 Stage 4 BERTopic/HDBSCAN으로 클러스터링된 고유 토픽 수. -1은 노이즈 클러스터.")
                 _sent_col = next(
                     (c for c in _analysis_df.columns
                      if "sentiment" in c.lower() and "score" in c.lower()),
@@ -869,6 +937,7 @@ with tab_summary:
                     k4.metric(
                         "Mean sentiment",
                         f"{_analysis_df[_sent_col].mean():.3f}",
+                        help="전체 기사의 평균 감성 점수. -1(극부정) ~ +1(극긍정). 0 근처는 중립.",
                     )
                 else:
                     k4.metric("Columns", f"{len(_analysis_df.columns)}")
@@ -952,40 +1021,7 @@ with tab_summary:
 
         st.divider()
 
-        # ==================== 5) DCI SUMMARY (if present) ====================
-        if _dci_ok:
-            st.subheader(f"🔬 DCI — {_dci_run.name}")
-            _dci_report = _dci_run / "final_report.md"
-            _dci_report_ko = _dci_run / "final_report.ko.md"
-            _dci_verdict = _dci_run / "sg_superhuman_verdict.json"
-            _dci_ledger = _dci_run / "evidence_ledger.jsonl"
-
-            d1, d2, d3 = st.columns(3)
-            if _dci_verdict.exists():
-                try:
-                    _v = _json.loads(_dci_verdict.read_text(encoding="utf-8"))
-                    d1.metric("SG decision", _v.get("decision", "?"))
-                    _gates = _v.get("gates", [])
-                    _pass = sum(1 for g in _gates if g.get("status") == "pass")
-                    d2.metric("Gates PASS", f"{_pass}/{len(_gates)}")
-                except Exception:
-                    d1.metric("SG decision", "parse error")
-            if _dci_ledger.exists():
-                try:
-                    _n_markers = sum(
-                        1 for _ in _dci_ledger.open("r", encoding="utf-8") if _.strip()
-                    )
-                    d3.metric("Evidence markers", f"{_n_markers:,}")
-                except Exception:
-                    d3.metric("Evidence markers", "?")
-
-            if _dci_report.exists():
-                with st.expander("📄 DCI final_report.md", expanded=False):
-                    st.markdown(_dci_report.read_text(encoding="utf-8"))
-
-        st.divider()
-
-        # ==================== 6) ARTIFACT LIST ====================
+        # ==================== 5) ARTIFACT LIST ====================
         st.subheader("📁 Full Artifact Inventory")
         _artifacts: list[dict] = []
 
@@ -1043,15 +1079,15 @@ with tab_summary:
              PROJECT_ROOT / "review-logs" / f"phase-master-narrative-{sel_date}.md")
         _add("W4", "review-logs/evidence",
              PROJECT_ROOT / "review-logs" / f"phase-master-evidence-{sel_date}.md")
-        if _dci_run:
-            _add("DCI", "final_report.md", _dci_run / "final_report.md")
-            _add("DCI", "final_report.ko.md", _dci_run / "final_report.ko.md")
-            _add("DCI", "evidence_ledger.jsonl",
-                 _dci_run / "evidence_ledger.jsonl")
-            _add("DCI", "sg_superhuman_verdict.json",
-                 _dci_run / "sg_superhuman_verdict.json")
-            _add("DCI", "executive_summary.md",
-                 _dci_run / "executive_summary.md")
+        # ── 빅데이터 분석 엔진 아티팩트 ──
+        _add("BigData", "articles_enriched.parquet",
+             DATA_DIR / "enriched" / sel_date / "articles_enriched.parquet")
+        _add("BigData", "answers/ (18문 JSON)",
+             DATA_DIR / "answers" / sel_date)
+        _add("BigData", "gti_daily.json",
+             DATA_DIR / "gti" / sel_date / "gti_daily.json")
+        _add("BigData", "signal_portfolio.yaml",
+             DATA_DIR / "signal_portfolio.yaml")
 
         if _artifacts:
             try:
@@ -1069,19 +1105,109 @@ with tab_summary:
 # ========================= TAB 1: OVERVIEW =================================
 
 with tab_overview:
-    # ADR-082: Chart Interpretations (Overview tab default-expanded)
-    _interp_date = period if period and re.match(r"\d{4}-\d{2}-\d{2}", str(period)) else (
-        max((p.name for p in (DATA_DIR / "analysis").iterdir()
-             if p.is_dir() and re.match(r"\d{4}-\d{2}-\d{2}", p.name)),
-            default="")
-        if (DATA_DIR / "analysis").exists() else ""
-    )
-    if _interp_date:
-        _render_interpretation_card(
-            "overview", _load_interpretations(_interp_date),
-            default_expanded=True,
-        )
     st.header("Crawling & Pipeline Overview")
+
+    # ── 빅데이터 엔진 현황 (가장 최근 날짜 기준) ─────────────────────
+    _ov_latest_date = (
+        sorted([d for d in (DATA_DIR / "answers").iterdir()
+                if d.is_dir() and _is_date_dir(d.name)],
+               reverse=True)[0].name
+        if (DATA_DIR / "answers").exists() and any(
+            d for d in (DATA_DIR / "answers").iterdir()
+            if d.is_dir() and _is_date_dir(d.name))
+        else None
+    )
+    _ov_gti_hist = DATA_DIR / "gti" / "gti_history.jsonl"
+    _ov_port = DATA_DIR / "signal_portfolio.yaml"
+
+    if _ov_latest_date:
+        st.caption(f"빅데이터 엔진 기준일: **{_ov_latest_date}** (최신 Q-Engine 결과)")
+        _ov_c1, _ov_c2, _ov_c3, _ov_c4, _ov_c5, _ov_c6 = st.columns(6)
+
+        # 18문 현황
+        _ov_ans = _ov_deg = _ov_ins = 0
+        for _i in range(1, 19):
+            _p = DATA_DIR / "answers" / _ov_latest_date / f"q{_i:02d}.json"
+            if _p.exists():
+                try:
+                    _s = json.loads(_p.read_text(encoding="utf-8")).get("status", "")
+                    if _s == "answered": _ov_ans += 1
+                    elif _s == "degraded": _ov_deg += 1
+                    else: _ov_ins += 1
+                except Exception: pass
+        _ov_c1.metric("Q-Engine 답변", f"{_ov_ans}/18", f"deg={_ov_deg}",
+                      help="18개 핵심 빅데이터 질문 중 완전 응답(answered) 수. 데이터 누적 기간이 길어질수록 자동으로 증가합니다.")
+
+        # GTI (최신)
+        _ov_gti_path = DATA_DIR / "gti" / _ov_latest_date / "gti_daily.json"
+        if _ov_gti_path.exists():
+            try:
+                _ov_gti = json.loads(_ov_gti_path.read_text(encoding="utf-8"))
+                _ov_c2.metric("GTI", f"{_ov_gti.get('gti_score',0):.1f}", _ov_gti.get("gti_label",""),
+                              help="Geopolitical Tension Index. 보도 집중도(G1)·핫스팟 감성(G2)·양국 긴장(G3) 합성. 0=평온 / 100=극도 긴장.")
+            except Exception:
+                _ov_c2.metric("GTI", "—")
+        else:
+            _ov_c2.metric("GTI", "—")
+
+        # GTI 추세 (직전 7일 평균 vs 오늘)
+        if _ov_gti_hist.exists():
+            try:
+                _ov_hist_rows = [
+                    json.loads(l) for l in _ov_gti_hist.read_text(encoding="utf-8").splitlines()
+                    if l.strip()
+                ]
+                _ov_hist_df = pd.DataFrame(_ov_hist_rows).drop_duplicates("date", keep="last")
+                _ov_hist_df = _ov_hist_df.sort_values("date")
+                _ov_hist_recent = _ov_hist_df["gti_score"].tail(7).tolist()
+                _ov_hist_avg = sum(_ov_hist_recent[:-1]) / max(len(_ov_hist_recent) - 1, 1) if len(_ov_hist_recent) > 1 else 0
+                _ov_gti_delta = _ov_hist_recent[-1] - _ov_hist_avg if _ov_hist_recent else 0
+                _ov_c3.metric("GTI 7일 평균", f"{_ov_hist_avg:.1f}", f"{_ov_gti_delta:+.1f} 오늘",
+                              help="직전 7일 GTI 평균 대비 오늘 값의 차이. 양수(+)이면 긴장 상승, 음수(-)이면 완화.")
+            except Exception:
+                _ov_c3.metric("GTI 추세", "—")
+        else:
+            _ov_c3.metric("GTI 추세", "—")
+
+        # Signal Portfolio
+        if _ov_port.exists():
+            try:
+                import yaml as _ov_yaml
+                _ov_p = _ov_yaml.safe_load(_ov_port.read_text(encoding="utf-8")) or {}
+                _ov_sigs = _ov_p.get("signals", {})
+                _ov_emerg = sum(1 for v in _ov_sigs.values() if v.get("status") in ("emerging","confirmed"))
+                _ov_c4.metric("포트폴리오", f"{len(_ov_sigs)}개 신호", f"활성 {_ov_emerg}개",
+                              help="Future Signal Portfolio. Q08(약한 신호)을 날짜별 누적 추적.\n\n"
+                                   "watching → emerging(3일+) → confirmed(7일+) → dismissed(14일 미등장)")
+            except Exception:
+                _ov_c4.metric("포트폴리오", "—")
+        else:
+            _ov_c4.metric("포트폴리오", "—")
+
+        # 축적 날짜 수
+        _ov_dates_count = sum(
+            1 for d in (DATA_DIR / "enriched").iterdir()
+            if d.is_dir() and _is_date_dir(d.name)
+        ) if (DATA_DIR / "enriched").exists() else 0
+        _ov_c5.metric("누적 분석일", f"{_ov_dates_count}일",
+                      help="articles_enriched.parquet가 생성된 날짜 수. 누적일이 많을수록 트렌드·인과 분석의 신뢰도가 높아집니다.\n\n"
+                           "- Q03 활성화: 14일\n- Q10 활성화: 21일\n- Q16 Granger 분석: 30일")
+
+        # 총 기사 수
+        try:
+            _ov_total_arts = sum(
+                sum(1 for l in (DATA_DIR / "raw" / d.name / "all_articles.jsonl").open(encoding="utf-8") if l.strip())
+                for d in (DATA_DIR / "enriched").iterdir()
+                if d.is_dir() and _is_date_dir(d.name)
+                and (DATA_DIR / "raw" / d.name / "all_articles.jsonl").exists()
+            )
+            _ov_c6.metric("총 기사 수", f"{_ov_total_arts:,}",
+                          help="전체 누적 분석일의 크롤링 기사 합계. 빅데이터 분석의 실질적 표본 크기.")
+        except Exception:
+            _ov_c6.metric("총 기사 수", "—",
+                          help="전체 누적 분析日의 크롤링 기사 합계.")
+
+        st.divider()
 
     # ----- Auto-Insights -----
     st.subheader("🎯 Auto-Insights")
@@ -1212,11 +1338,6 @@ with tab_overview:
 # ========================= TAB 2: TOPICS ====================================
 
 with tab_topics:
-    if _interp_date:
-        _render_interpretation_card(
-            "topics", _load_interpretations(_interp_date),
-            default_expanded=False,
-        )
     st.header("Topic Analysis")
 
     # ----- Auto-Insights -----
@@ -1305,11 +1426,6 @@ with tab_topics:
 # ========================= TAB 3: SENTIMENT & EMOTIONS =====================
 
 with tab_sentiment:
-    if _interp_date:
-        _render_interpretation_card(
-            "sentiment", _load_interpretations(_interp_date),
-            default_expanded=False,
-        )
     st.header("Sentiment & Emotion Analysis")
 
     # ----- Auto-Insights -----
@@ -1426,162 +1542,9 @@ with tab_sentiment:
         st.warning("Analysis data not available.")
 
 
-# ========================= TAB 4: TIME SERIES ===============================
-
-with tab_timeseries:
-    if _interp_date:
-        _render_interpretation_card(
-            "time_series", _load_interpretations(_interp_date),
-            default_expanded=False,
-        )
-    st.header("Time Series Analysis")
-
-    # ----- Auto-Insights -----
-    st.subheader("🎯 Auto-Insights")
-    di.render_insights(
-        st, di.insight_timeseries_a(timeseries_df, list(active_dates)),
-    )
-    st.divider()
-    st.subheader("📊 Supporting Charts")
-
-    if timeseries_df is not None:
-        col_f1, col_f2 = st.columns(2)
-
-        metric_types = sorted(timeseries_df["metric_type"].unique())
-        with col_f1:
-            selected_metric = st.selectbox("Metric Type", metric_types, index=0)
-
-        topic_ids = sorted(timeseries_df["topic_id"].unique())
-        with col_f2:
-            selected_topics = st.multiselect(
-                "Topic IDs (leave empty for aggregate -1)",
-                topic_ids,
-                default=[-1] if -1 in topic_ids else topic_ids[:1],
-            )
-
-        if not selected_topics:
-            selected_topics = [-1] if -1 in topic_ids else topic_ids[:1]
-
-        mask = (
-            (timeseries_df["metric_type"] == selected_metric) &
-            (timeseries_df["topic_id"].isin(selected_topics))
-        )
-        ts_filtered = timeseries_df[mask].copy()
-
-        if len(ts_filtered) > 0:
-            ts_filtered["date"] = pd.to_datetime(ts_filtered["date"])
-            ts_filtered = ts_filtered.sort_values("date")
-
-            fig_ts = go.Figure()
-            for tid in selected_topics:
-                tid_data = ts_filtered[ts_filtered["topic_id"] == tid]
-                fig_ts.add_trace(go.Scatter(
-                    x=tid_data["date"],
-                    y=tid_data["value"],
-                    mode="lines",
-                    name=f"Topic {tid} — Value",
-                    opacity=0.6,
-                ))
-                if tid_data["trend"].notna().any():
-                    fig_ts.add_trace(go.Scatter(
-                        x=tid_data["date"],
-                        y=tid_data["trend"],
-                        mode="lines",
-                        name=f"Topic {tid} — Trend",
-                        line=dict(dash="dash", width=2),
-                    ))
-
-                burst_data = tid_data[tid_data["burst_score"].notna() & (tid_data["burst_score"] > 0)]
-                if len(burst_data) > 0:
-                    fig_ts.add_trace(go.Scatter(
-                        x=burst_data["date"],
-                        y=burst_data["value"],
-                        mode="markers",
-                        name=f"Topic {tid} — Bursts",
-                        marker=dict(size=10, symbol="star", color="red"),
-                    ))
-
-            fig_ts.update_layout(
-                title=f"Time Series: {selected_metric}",
-                xaxis_title="Date",
-                yaxis_title="Value",
-                height=500,
-            )
-            st.plotly_chart(fig_ts, use_container_width=True)
-
-            if ts_filtered["ma_short"].notna().any():
-                st.subheader("Moving Average Crossover")
-                fig_ma = go.Figure()
-                for tid in selected_topics:
-                    tid_data = ts_filtered[ts_filtered["topic_id"] == tid]
-                    fig_ma.add_trace(go.Scatter(
-                        x=tid_data["date"], y=tid_data["ma_short"],
-                        name=f"Topic {tid} — MA Short (3d)",
-                        line=dict(width=1),
-                    ))
-                    fig_ma.add_trace(go.Scatter(
-                        x=tid_data["date"], y=tid_data["ma_long"],
-                        name=f"Topic {tid} — MA Long (14d)",
-                        line=dict(width=1, dash="dash"),
-                    ))
-                fig_ma.update_layout(height=400, title="Short vs Long Moving Average")
-                st.plotly_chart(fig_ma, use_container_width=True)
-
-            if ts_filtered["prophet_forecast"].notna().any():
-                st.subheader("Prophet Forecast")
-                for tid in selected_topics:
-                    tid_data = ts_filtered[ts_filtered["topic_id"] == tid]
-                    forecast_data = tid_data[tid_data["prophet_forecast"].notna()]
-                    if len(forecast_data) > 0:
-                        fig_prophet = go.Figure()
-                        fig_prophet.add_trace(go.Scatter(
-                            x=tid_data["date"], y=tid_data["value"],
-                            name="Actual", line=dict(color="#3498db"),
-                        ))
-                        fig_prophet.add_trace(go.Scatter(
-                            x=forecast_data["date"], y=forecast_data["prophet_forecast"],
-                            name="Forecast", line=dict(color="#e74c3c", dash="dash"),
-                        ))
-                        if forecast_data["prophet_lower"].notna().any():
-                            fig_prophet.add_trace(go.Scatter(
-                                x=forecast_data["date"], y=forecast_data["prophet_upper"],
-                                mode="lines", line=dict(width=0), showlegend=False,
-                            ))
-                            fig_prophet.add_trace(go.Scatter(
-                                x=forecast_data["date"], y=forecast_data["prophet_lower"],
-                                mode="lines", line=dict(width=0), showlegend=False,
-                                fill="tonexty", fillcolor="rgba(231,76,60,0.15)",
-                            ))
-                        fig_prophet.update_layout(
-                            title=f"Prophet Forecast — Topic {tid}",
-                            height=400,
-                        )
-                        st.plotly_chart(fig_prophet, use_container_width=True)
-        else:
-            st.info("No data for the selected filters.")
-
-        st.subheader("Time Series Statistics")
-        ts_stats = {
-            "Total Series": timeseries_df["series_id"].nunique(),
-            "Date Range": f"{timeseries_df['date'].min()} -> {timeseries_df['date'].max()}",
-            "Data Points": format_number(len(timeseries_df)),
-            "Burst Events": int((timeseries_df["burst_score"].notna() & (timeseries_df["burst_score"] > 0)).sum()),
-            "Changepoints": int(timeseries_df["is_changepoint"].sum()),
-        }
-        for k, v in ts_stats.items():
-            st.text(f"  {k}: {v}")
-    else:
-        st.warning("Time series data not available.")
-
-
 # ========================= TAB 5: WORD CLOUD ================================
 
 with tab_wordcloud:
-    if _interp_date:
-        _render_interpretation_card(
-            "word_cloud", _load_interpretations(_interp_date),
-            default_expanded=False,
-        )
     st.header("Word Cloud Analysis")
 
     if raw_df is not None:
@@ -1701,592 +1664,6 @@ with tab_wordcloud:
                 )
     else:
         st.warning("Raw article data not available.")
-
-
-# ========================= TAB 6: ARTICLE EXPLORER =========================
-
-with tab_explorer:
-    st.header("Article Explorer")
-
-    if merged_df is not None:
-        col_e1, col_e2, col_e3 = st.columns(3)
-
-        with col_e1:
-            sources = ["All"] + sorted(merged_df["source"].dropna().unique().tolist())
-            selected_source = st.selectbox("Source", sources)
-
-        with col_e2:
-            languages = ["All"] + sorted(merged_df["language"].dropna().unique().tolist())
-            selected_lang = st.selectbox("Language", languages)
-
-        with col_e3:
-            search_query = st.text_input("Search in title", "")
-
-        filtered = merged_df.copy()
-        if selected_source != "All":
-            filtered = filtered[filtered["source"] == selected_source]
-        if selected_lang != "All":
-            filtered = filtered[filtered["language"] == selected_lang]
-        if search_query:
-            filtered = filtered[
-                filtered["title"].str.contains(search_query, case=False, na=False)
-            ]
-
-        st.caption(f"Showing {len(filtered)} of {len(merged_df)} articles")
-
-        sort_col = st.selectbox(
-            "Sort by",
-            ["published_at", "importance_score", "sentiment_score", "topic_probability"],
-            index=0,
-        )
-        sort_asc = st.checkbox("Ascending", value=False)
-
-        if sort_col in filtered.columns:
-            filtered = filtered.sort_values(sort_col, ascending=sort_asc, na_position="last")
-
-        display_cols = [
-            "title", "source", "language", "published_at",
-            "sentiment_label", "sentiment_score",
-            "topic_id", "topic_label",
-            "steeps_category", "importance_score",
-        ]
-        display_cols = [c for c in display_cols if c in filtered.columns]
-
-        st.dataframe(
-            filtered[display_cols].head(100),
-            use_container_width=True,
-            hide_index=True,
-            height=500,
-        )
-
-        st.subheader("Article Detail")
-        if len(filtered) > 0:
-            article_titles = filtered["title"].head(50).tolist()
-            selected_title = st.selectbox("Select an article", article_titles)
-            row = filtered[filtered["title"] == selected_title].iloc[0]
-
-            col_d1, col_d2 = st.columns([2, 1])
-            with col_d1:
-                st.markdown(f"**{row['title']}**")
-                st.caption(f"Source: {row.get('source', 'N/A')} | "
-                           f"Language: {row.get('language', 'N/A')} | "
-                           f"Published: {row.get('published_at', 'N/A')}")
-                body = row.get("body", "")
-                if isinstance(body, str) and body:
-                    st.text_area("Body", body[:3000], height=300, disabled=True)
-
-            with col_d2:
-                st.markdown("**Analysis**")
-                for field in ["sentiment_label", "sentiment_score", "steeps_category",
-                              "importance_score", "topic_id", "topic_label", "topic_probability"]:
-                    if field in row.index and pd.notna(row[field]):
-                        label = field.replace("_", " ").title()
-                        st.text(f"{label}: {row[field]}")
-
-                emotion_cols = [c for c in row.index if c.startswith("emotion_")]
-                if emotion_cols:
-                    st.markdown("**Emotions**")
-                    emo_data = {c.replace("emotion_", "").title(): row[c]
-                                for c in emotion_cols if pd.notna(row[c])}
-                    if emo_data:
-                        fig_emo = px.bar(
-                            x=list(emo_data.keys()),
-                            y=list(emo_data.values()),
-                            labels={"x": "", "y": "Score"},
-                            height=250,
-                        )
-                        fig_emo.update_layout(margin=dict(t=10, b=10))
-                        st.plotly_chart(fig_emo, use_container_width=True)
-
-    elif articles_df is not None:
-        st.dataframe(articles_df.head(100), use_container_width=True, hide_index=True)
-    else:
-        st.warning("Article data not available.")
-
-
-# ========================= TAB 7: W3 INSIGHT BRIEF =========================
-
-with tab_w3_insight:
-    if _interp_date:
-        _render_interpretation_card(
-            "w3_insight", _load_interpretations(_interp_date),
-            default_expanded=False,
-        )
-    st.header("🧠 W3 Insight Brief — Cross-Module Synthesis")
-
-    insights_root = DATA_DIR / "insights"
-    # Auto-discover the most recent run directory (monthly/weekly/quarterly)
-    run_dirs = [
-        p for p in insights_root.iterdir()
-        if p.is_dir() and p.name.startswith(("monthly-", "weekly-", "quarterly-"))
-    ] if insights_root.exists() else []
-    run_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-
-    if not run_dirs:
-        st.warning(
-            "No W3 insight runs found. Run `python main.py --mode insight "
-            "--window 30` to generate."
-        )
-    else:
-        default_idx = 0
-        selected = st.selectbox(
-            "Select insight run",
-            options=[p.name for p in run_dirs],
-            index=default_idx,
-        )
-        run_dir = insights_root / selected
-        synthesis_dir = run_dir / "synthesis"
-
-        # --- Header: state metadata ---
-        state_path = insights_root / "insight_state.json"
-        if state_path.exists():
-            state = json.loads(state_path.read_text())
-            cov = state.get("data_coverage", {})
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric(
-                "Data coverage",
-                f"{cov.get('available_days', 0)} / {cov.get('window_days', 0)} days",
-                f"{cov.get('coverage_ratio', 0)*100:.0f}%",
-            )
-            col2.metric(
-                "Modules completed",
-                f"{len(state.get('modules_completed', []))} / 7",
-            )
-            col3.metric(
-                "Validation",
-                "PASS" if state.get("validation_passed") else "FAIL",
-            )
-            col4.metric(
-                "Total elapsed",
-                f"{state.get('total_elapsed_seconds', 0):.1f}s",
-            )
-
-        st.divider()
-
-        # --- Executive Summary + full report (collapsible) ---
-        report_path = synthesis_dir / "insight_report.md"
-        if report_path.exists():
-            report_md = report_path.read_text(encoding="utf-8")
-            # Extract Executive Summary section for primary display
-            lines = report_md.splitlines()
-            exec_section: list[str] = []
-            capturing = False
-            for ln in lines:
-                if ln.startswith("## Executive Summary"):
-                    capturing = True
-                    continue
-                if capturing and ln.startswith("## "):
-                    break
-                if capturing:
-                    exec_section.append(ln)
-            if exec_section:
-                st.subheader("Executive Summary")
-                st.markdown("\n".join(exec_section).strip())
-
-            with st.expander("📄 Full Insight Report (Markdown)", expanded=False):
-                st.markdown(report_md)
-        else:
-            st.warning(f"insight_report.md not found at {report_path}")
-
-        st.divider()
-
-        # --- Key Findings from insight_data.json ---
-        data_path = synthesis_dir / "insight_data.json"
-        if data_path.exists():
-            insight_data = json.loads(data_path.read_text())
-            st.subheader(f"🎯 Top Findings — {insight_data.get('total_findings', 0)} total")
-
-            top_findings = insight_data.get("top_findings", [])
-            if top_findings:
-                top_df = pd.DataFrame([
-                    {
-                        "Module": f.get("module", ""),
-                        "Metric": f.get("metric", ""),
-                        "Finding": f.get("description", ""),
-                        "Magnitude": round(f.get("magnitude", 0), 3),
-                    }
-                    for f in top_findings
-                ])
-                st.dataframe(top_df, use_container_width=True, hide_index=True)
-
-            # Per-module breakdown chart
-            modules = insight_data.get("modules_available", [])
-            if modules:
-                mod_counts = {}
-                kf_path = synthesis_dir / "key_findings.json"
-                if kf_path.exists():
-                    kf = json.loads(kf_path.read_text())
-                    for f in kf.get("top_5", []):
-                        m = f.get("module", "unknown")
-                        mod_counts[m] = mod_counts.get(m, 0) + 1
-
-        # --- Per-module deep dive ---
-        st.divider()
-        st.subheader("🔬 Per-Module Deep Dive")
-
-        module_files = {
-            "crosslingual": [
-                ("asymmetry_index.parquet", "JSD Asymmetry (per language pair × date)"),
-                ("filter_bubble.parquet", "Filter Bubble (Jaccard overlap)"),
-                ("attention_gaps.parquet", "Attention Gaps (per topic)"),
-            ],
-            "narrative": [
-                ("voice_dominance.parquet", "Voice Dominance (HHI per topic)"),
-                ("media_health.parquet", "Media Health Score"),
-                ("frame_evolution.parquet", "Frame Evolution (STEEPS over time)"),
-            ],
-            "entity": [
-                ("trajectories.parquet", "Entity Trajectories"),
-                ("hidden_connections.parquet", "Hidden Entity Connections"),
-            ],
-            "temporal": [
-                ("velocity_map.parquet", "Cross-Lingual Velocity Map"),
-                ("decay_curves.parquet", "Topic Decay Curves"),
-            ],
-            "geopolitical": [
-                ("bilateral_index.parquet", "Bilateral Relations Index (BRI)"),
-                ("soft_power.parquet", "Soft Power Scores"),
-            ],
-            "economic": [
-                ("epu_index.parquet", "Economic Policy Uncertainty"),
-                ("sector_sentiment.parquet", "Sector Sentiment"),
-                ("narrative_economics.parquet", "Narrative Economics"),
-            ],
-        }
-
-        selected_mod = st.selectbox(
-            "Select module to explore",
-            options=list(module_files.keys()),
-        )
-
-        mod_dir = run_dir / selected_mod
-        if mod_dir.exists():
-            for fn, label in module_files[selected_mod]:
-                fpath = mod_dir / fn
-                if fpath.exists():
-                    try:
-                        df = pd.read_parquet(fpath)
-                        with st.expander(
-                            f"{label} — {len(df)} rows", expanded=False,
-                        ):
-                            if len(df) > 0:
-                                st.dataframe(
-                                    df.head(100),
-                                    use_container_width=True,
-                                    hide_index=True,
-                                )
-
-                                # Simple visualization for numeric-heavy tables
-                                numeric_cols = df.select_dtypes(
-                                    include=["number"]
-                                ).columns.tolist()
-                                if len(numeric_cols) >= 1 and len(df) <= 5000:
-                                    try:
-                                        primary = numeric_cols[0]
-                                        fig = px.histogram(
-                                            df,
-                                            x=primary,
-                                            nbins=30,
-                                            title=f"Distribution: {primary}",
-                                            height=300,
-                                        )
-                                        fig.update_layout(margin=dict(t=30, b=20))
-                                        st.plotly_chart(
-                                            fig, use_container_width=True,
-                                        )
-                                    except Exception:
-                                        pass
-                            else:
-                                st.info(f"{label}: empty (no qualifying data)")
-                    except Exception as e:
-                        st.error(f"{label}: read error — {e}")
-        else:
-            st.warning(f"Module directory {selected_mod} not found.")
-
-
-# ========================= TAB 8: DCI (Independent Workflow) ================
-
-with tab_dci:
-    st.header("🔬 Deep Content Intelligence — Independent Workflow")
-    st.caption(
-        "14-layer analytic pipeline with char_coverage=1.00 guarantee. "
-        "Run via `python main.py --mode dci --date YYYY-MM-DD`."
-    )
-
-    # Layer status from technique_registry
-    try:
-        from src.config.constants import (
-            DCI_LAYERS,
-            DCI_TECHNIQUES_TOTAL,
-            DCI_TECHNIQUES_P_MODE,
-            DCI_TECHNIQUES_H_MODE,
-            DCI_TECHNIQUES_L_MODE,
-        )
-        from src.dci.orchestrator import (
-            ensure_layers_registered,
-            registered_layer_ids,
-        )
-        ensure_layers_registered()
-        registered = set(registered_layer_ids())
-    except Exception as exc:
-        st.error(f"DCI package import failed: {exc}")
-        DCI_LAYERS = ()
-        registered = set()
-        DCI_TECHNIQUES_TOTAL = 0
-        DCI_TECHNIQUES_P_MODE = 0
-        DCI_TECHNIQUES_H_MODE = 0
-        DCI_TECHNIQUES_L_MODE = 0
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Layers wired", f"{len(registered)} / {len(DCI_LAYERS)}")
-    col2.metric("Techniques total", DCI_TECHNIQUES_TOTAL)
-    col3.metric("P-mode (Pure Python)", DCI_TECHNIQUES_P_MODE)
-    col4.metric("H/L-mode (LLM-bound)",
-                DCI_TECHNIQUES_H_MODE + DCI_TECHNIQUES_L_MODE)
-
-    st.divider()
-    st.subheader("14-Layer Architecture")
-    if DCI_LAYERS:
-        rows = []
-        for layer_id in DCI_LAYERS:
-            rows.append({
-                "Layer": layer_id,
-                "Wired": "✓" if layer_id in registered else "—",
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-    st.divider()
-    st.subheader("Latest Run Output")
-
-    dci_run_dir = DATA_DIR / "dci" / "runs"
-    if dci_run_dir.exists():
-        runs = sorted(
-            [p.name for p in dci_run_dir.iterdir() if p.is_dir()],
-            reverse=True,
-        )
-    else:
-        runs = []
-
-    if not runs:
-        st.info(
-            "No DCI runs found yet. Execute "
-            "`python main.py --mode dci --date YYYY-MM-DD` "
-            "to generate one. Use `--dry-run` for a zero-cost smoke run."
-        )
-    else:
-        selected_run = st.selectbox(
-            "Select run date", options=runs, index=0,
-        )
-        run_path = dci_run_dir / selected_run
-        report_path = run_path / "final_report.md"
-        if report_path.exists():
-            st.markdown(report_path.read_text(encoding="utf-8"))
-        else:
-            st.warning(f"No final_report.md at {report_path}")
-
-        kg_path = run_path / "kg.gexf"
-        if kg_path.exists():
-            st.divider()
-            st.subheader("🕸️ Knowledge Graph (3D force layout)")
-            try:
-                import networkx as nx
-                g = nx.read_gexf(kg_path)
-                if g.number_of_nodes() == 0:
-                    st.info("Knowledge graph is empty for this run.")
-                elif g.number_of_nodes() > 500:
-                    st.warning(
-                        f"KG has {g.number_of_nodes()} nodes — "
-                        f"rendering top-100 by degree for responsiveness."
-                    )
-                    # Trim to top-100 nodes by degree
-                    degs = sorted(g.degree(weight="weight"), key=lambda x: -x[1])
-                    keep = {n for n, _ in degs[:100]}
-                    g = g.subgraph(keep).copy()
-
-                if g.number_of_nodes() > 0:
-                    layout = nx.spring_layout(
-                        g, dim=3, seed=42, k=0.5,
-                        iterations=50,
-                    )
-                    edge_x, edge_y, edge_z = [], [], []
-                    for u, v in g.edges():
-                        xa, ya, za = layout[u]
-                        xb, yb, zb = layout[v]
-                        edge_x.extend([xa, xb, None])
-                        edge_y.extend([ya, yb, None])
-                        edge_z.extend([za, zb, None])
-                    node_x = [layout[n][0] for n in g.nodes()]
-                    node_y = [layout[n][1] for n in g.nodes()]
-                    node_z = [layout[n][2] for n in g.nodes()]
-                    node_text = [
-                        f"{n}<br>articles={g.nodes[n].get('article_count', 0)}"
-                        for n in g.nodes()
-                    ]
-                    node_size = [
-                        8 + 2 * g.degree(n, weight="weight")
-                        for n in g.nodes()
-                    ]
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter3d(
-                        x=edge_x, y=edge_y, z=edge_z,
-                        mode="lines",
-                        line=dict(width=1, color="rgba(125,125,125,0.3)"),
-                        hoverinfo="none",
-                        showlegend=False,
-                    ))
-                    fig.add_trace(go.Scatter3d(
-                        x=node_x, y=node_y, z=node_z,
-                        mode="markers",
-                        marker=dict(
-                            size=node_size,
-                            color=node_size,
-                            colorscale="Viridis",
-                            opacity=0.85,
-                        ),
-                        text=node_text,
-                        hoverinfo="text",
-                        showlegend=False,
-                    ))
-                    fig.update_layout(
-                        scene=dict(
-                            xaxis=dict(visible=False),
-                            yaxis=dict(visible=False),
-                            zaxis=dict(visible=False),
-                        ),
-                        height=600,
-                        margin=dict(l=0, r=0, t=20, b=0),
-                        hovermode="closest",
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.caption(
-                        f"{g.number_of_nodes()} nodes · "
-                        f"{g.number_of_edges()} edges · "
-                        f"spring_layout seed=42"
-                    )
-            except Exception as exc:
-                st.warning(f"Could not render KG: {exc}")
-
-    st.divider()
-    st.subheader("SG-Superhuman Thresholds")
-    try:
-        from src.config.constants import (
-            DCI_SG_CHAR_COVERAGE_MIN,
-            DCI_SG_TRIPLE_LENS_COVERAGE_MIN,
-            DCI_SG_LLM_BODY_INJECTION_RATIO_MIN,
-            DCI_SG_NLI_VERIFICATION_PASS_RATE_MIN,
-            DCI_SG_TRIADIC_CONSENSUS_RATE_MIN,
-            DCI_SG_ADVERSARIAL_CRITIC_PASS_MIN,
-            DCI_SG_MULTILINGUAL_COVERAGE_MIN,
-        )
-        st.dataframe(pd.DataFrame([
-            {"Gate": "char_coverage",           "Threshold": DCI_SG_CHAR_COVERAGE_MIN},
-            {"Gate": "triple_lens_coverage",    "Threshold": DCI_SG_TRIPLE_LENS_COVERAGE_MIN},
-            {"Gate": "llm_body_injection",      "Threshold": DCI_SG_LLM_BODY_INJECTION_RATIO_MIN},
-            {"Gate": "nli_pass_rate",           "Threshold": DCI_SG_NLI_VERIFICATION_PASS_RATE_MIN},
-            {"Gate": "triadic_consensus",       "Threshold": DCI_SG_TRIADIC_CONSENSUS_RATE_MIN},
-            {"Gate": "adversarial_critic_pass", "Threshold": DCI_SG_ADVERSARIAL_CRITIC_PASS_MIN},
-            {"Gate": "multilingual_coverage",   "Threshold": DCI_SG_MULTILINGUAL_COVERAGE_MIN},
-        ]), use_container_width=True, hide_index=True)
-    except ImportError:
-        st.warning("DCI constants unavailable")
-
-
-# ========================= TAB 9: Newspaper (WF5) ============================
-
-with tab_newspaper:
-    st.header("📰 Personal Newspaper — The Global Ledger")
-    st.caption(
-        "WF5 Independent Workflow (ADR-083). 135,000-word daily + "
-        "205,000-word weekly. 17 editorial agents · 15 principles."
-    )
-
-    _np_root = DATA_DIR.parent / "newspaper"
-    _daily_root = _np_root / "daily"
-    _weekly_root = _np_root / "weekly"
-
-    _daily_editions = sorted(
-        [p.name for p in _daily_root.iterdir() if p.is_dir()],
-        reverse=True,
-    ) if _daily_root.exists() else []
-    _weekly_editions = sorted(
-        [p.name for p in _weekly_root.iterdir() if p.is_dir()],
-        reverse=True,
-    ) if _weekly_root.exists() else []
-
-    np_tab_daily, np_tab_weekly = st.tabs(["📅 Daily", "🗓️ Weekly"])
-
-    with np_tab_daily:
-        if not _daily_editions:
-            st.info(
-                "No daily editions yet. Run "
-                "`python3 scripts/reports/generate_newspaper_daily.py "
-                "--date YYYY-MM-DD` or `/run-newspaper-only`."
-            )
-        else:
-            sel_np_date = st.selectbox(
-                "Select daily edition", _daily_editions,
-                key="np_daily_sel",
-            )
-            _ed = _daily_root / sel_np_date
-            _meta = _ed / "newspaper_metadata.json"
-            if _meta.exists():
-                try:
-                    _m = json.loads(_meta.read_text(encoding="utf-8"))
-                    _stats = _m.get("stats") or {}
-                    c1, c2, c3, c4, c5 = st.columns(5)
-                    c1.metric("기사", f"{_stats.get('articles_total', 0):,}")
-                    c2.metric("클러스터", f"{_stats.get('clusters_total', 0):,}")
-                    c3.metric("3각검증", f"{_stats.get('clusters_triangulated', 0):,}")
-                    c4.metric("Dark Corners", f"{_stats.get('countries_dark', 0):,}")
-                    c5.metric("증거 앵커", f"{_stats.get('evidence_markers', 0):,}")
-                    st.caption(
-                        f"Generated {_m.get('generated_at', '')} · "
-                        f"elapsed {_m.get('total_elapsed_seconds', 0)}s · "
-                        f"template {_m.get('template_version', '?')}"
-                    )
-                except Exception as _exc:
-                    st.warning(f"metadata parse: {_exc}")
-            # iframe the actual HTML
-            _idx = _ed / "index.html"
-            if _idx.exists():
-                try:
-                    html = _idx.read_text(encoding="utf-8")
-                    # Inline asset fetch: browser can't access filesystem,
-                    # so inline CSS so iframe renders correctly.
-                    _css = _ed / "assets" / "style.css"
-                    if _css.exists():
-                        html = html.replace(
-                            '<link rel="stylesheet" href="assets/style.css">',
-                            f"<style>{_css.read_text(encoding='utf-8')}</style>",
-                        )
-                    st.components.v1.html(html, height=900, scrolling=True)
-                except Exception as _exc:
-                    st.error(f"render failed: {_exc}")
-            else:
-                st.warning("index.html missing — run the orchestrator first.")
-
-    with np_tab_weekly:
-        if not _weekly_editions:
-            st.info(
-                "No weekly editions yet. Requires ≥ 4 daily editions in the "
-                "ISO week, then run `/run-newspaper-weekly --week YYYY-W##`."
-            )
-        else:
-            sel_week = st.selectbox(
-                "Select weekly edition", _weekly_editions,
-                key="np_weekly_sel",
-            )
-            _wed = _weekly_root / sel_week
-            _idx = _wed / "index.html"
-            if _idx.exists():
-                html = _idx.read_text(encoding="utf-8")
-                _css = _wed / "assets" / "style.css"
-                if _css.exists():
-                    html = html.replace(
-                        '<link rel="stylesheet" href="assets/style.css">',
-                        f"<style>{_css.read_text(encoding='utf-8')}</style>",
-                    )
-                st.components.v1.html(html, height=900, scrolling=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2409,3 +1786,534 @@ with st.sidebar:
     st.markdown("---")
     st.caption("GlobalNews Crawling & Analysis Pipeline")
     st.caption(f"Available dates: {len(all_dates)} | Current: {period} view")
+
+
+# ========================= TAB: 18 QUESTIONS ================================
+
+_Q_META = {
+    "Q01": ("버스트 탐지", "🔥"),
+    "Q02": ("트렌드 추이", "📈"),
+    "Q03": ("사건 전후 변화", "🔄"),
+    "Q04": ("프레이밍 비교", "🗣️"),
+    "Q05": ("국가 감성 변화", "🌐"),
+    "Q06": ("다크 코너 탐지", "🕳️"),
+    "Q07": ("양국 긴장/완화", "⚖️"),
+    "Q08": ("약한 신호 탐지", "📡"),
+    "Q09": ("패러다임 전환 전조", "🌀"),
+    "Q10": ("의제 이동 패턴", "🔀"),
+    "Q11": ("의제 선점 언론사", "🏁"),
+    "Q12": ("진보/보수 강조점", "🔴🔵"),
+    "Q13": ("언어권 독자 의제", "🌍"),
+    "Q14": ("미디어 보도 격차", "📏"),
+    "Q15": ("뉴스 감성 선행성", "📊"),
+    "Q16": ("이슈 인과 연쇄", "🔗"),
+    "Q17": ("동시 급증 클러스터", "💥"),
+    "Q18": ("글로벌 의제 중심 엔티티", "🎯"),
+}
+
+_STATUS_COLOR = {
+    "answered": "🟢",
+    "degraded": "🟡",
+    "insufficient_data": "🔴",
+}
+
+_STEEPS_EMOJI = {
+    "SOC": "👥", "TEC": "💻", "ECO": "💰", "ENV": "🌿",
+    "POL": "🏛️", "SEC": "🛡️", "SPI": "🙏", "CRS": "⚠️",
+}
+
+
+@st.cache_data(ttl=120)
+def _load_all_answers(date: str) -> dict[str, dict]:
+    """Load all 18 Q-Engine JSON files for a given date."""
+    answers = {}
+    base = DATA_DIR / "answers" / date
+    if not base.exists():
+        return answers
+    for i in range(1, 19):
+        p = base / f"q{i:02d}.json"
+        if p.exists():
+            try:
+                answers[f"Q{i:02d}"] = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    return answers
+
+
+@st.cache_data(ttl=300)
+def _answer_history() -> pd.DataFrame:
+    """Summary of answered/degraded/insufficient counts per date."""
+    rows = []
+    base = DATA_DIR / "answers"
+    if not base.exists():
+        return pd.DataFrame()
+    for d in sorted(base.iterdir()):
+        if not d.is_dir() or not _is_date_dir(d.name):
+            continue
+        ans = deg = ins = 0
+        for i in range(1, 19):
+            p = d / f"q{i:02d}.json"
+            if p.exists():
+                try:
+                    s = json.loads(p.read_text(encoding="utf-8")).get("status", "")
+                    if s == "answered":
+                        ans += 1
+                    elif s == "degraded":
+                        deg += 1
+                    else:
+                        ins += 1
+                except Exception:
+                    pass
+        rows.append({"date": d.name, "answered": ans, "degraded": deg, "insufficient": ins})
+    return pd.DataFrame(rows)
+
+
+def _render_question_card(qid: str, data: dict) -> None:
+    status = data.get("status", "unknown")
+    icon = _STATUS_COLOR.get(status, "⚪")
+    short, emoji = _Q_META.get(qid, (qid, "🔢"))
+    confidence = data.get("confidence", 0.0)
+    findings = data.get("top_findings") or []
+    elapsed = data.get("elapsed_ms", 0)
+
+    with st.expander(f"{icon} {emoji} **{qid}** {data.get('question_ko', short)}", expanded=False):
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("상태", status.upper(),
+                     help="answered: 완전 응답 · degraded: 부분 응답 · insufficient_data: 데이터 부족으로 응답 불가")
+        col_b.metric("신뢰도", f"{confidence:.0%}",
+                     help="알고리즘이 이 답변을 얼마나 확신하는지. 데이터 양·품질·분석 방법에 따라 결정됩니다.")
+        col_c.metric("데이터 일수", f"{data.get('data_days_available', 0)}일",
+                     help="이 질문 답변에 활용된 과거 데이터 일수. 일수가 많을수록 트렌드 분석이 정확해집니다.")
+
+        if findings:
+            st.markdown("**핵심 발견:**")
+            for f in findings[:5]:
+                st.markdown(f"- {f}")
+
+        answer = data.get("answer") or {}
+        if isinstance(answer, dict) and answer and status != "insufficient_data":
+            _render_answer_detail(qid, answer)
+
+        if elapsed:
+            st.caption(f"처리 시간: {elapsed:.0f}ms")
+
+
+def _render_answer_detail(qid: str, answer: dict) -> None:
+    """Render question-specific detail view."""
+    st.markdown("---")
+
+    if qid == "Q01" and "bursting_topics" in answer:
+        rows = answer["bursting_topics"]
+        if rows:
+            df = pd.DataFrame(rows)
+            df["category"] = df["steeps"].map(lambda s: f"{_STEEPS_EMOJI.get(s, '')} {s}")
+            fig = px.bar(
+                df, x="category", y="burst_score", color="burst_score",
+                color_continuous_scale="Reds",
+                labels={"burst_score": "버스트 점수", "category": "카테고리"},
+                title="STEEPS 카테고리별 버스트 점수",
+            )
+            fig.update_layout(height=300, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+    elif qid == "Q02" and "rising" in answer:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**📈 상승 트렌드**")
+            for item in (answer.get("rising") or [])[:5]:
+                st.markdown(f"- `{item.get('steeps','')}` {item.get('trend_direction','')} ({item.get('growth_pct',0):.0f}%)")
+        with c2:
+            st.markdown("**📉 하락 트렌드**")
+            for item in (answer.get("falling") or [])[:5]:
+                st.markdown(f"- `{item.get('steeps','')}` {item.get('trend_direction','')} ({item.get('growth_pct',0):.0f}%)")
+
+    elif qid == "Q06" and "all_regions" in answer:
+        rows = answer.get("all_regions") or []
+        if rows:
+            df = pd.DataFrame(rows[:20])
+            if "region" in df.columns and "coverage_pct" in df.columns:
+                fig = px.bar(
+                    df, x="coverage_pct", y="region", orientation="h",
+                    color="coverage_pct", color_continuous_scale="Blues",
+                    title="지역별 보도 비율 (%)",
+                    labels={"coverage_pct": "보도 비율 (%)", "region": "지역"},
+                )
+                fig.update_layout(height=400, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+        dark = answer.get("dark_corners_under3pct") or []
+        if dark:
+            dark_names = [
+                d.get("region", str(d)) if isinstance(d, dict) else str(d)
+                for d in dark[:10]
+                if (d.get("region", "") if isinstance(d, dict) else d) not in ("UNKNOWN", "")
+            ]
+            if dark_names:
+                st.markdown(f"**🕳️ 다크 코너** (보도율 3% 미만): {', '.join(dark_names)}")
+
+    elif qid == "Q08" and "weak_signals" in answer:
+        signals = answer.get("weak_signals") or []
+        total = answer.get("total_detected", 0)
+        st.caption(f"총 {total}개 약한 신호 탐지")
+        for s in signals[:8]:
+            geo = s.get("geo_focus") or s.get("geo_focus_primary", "")
+            if isinstance(geo, dict):
+                geo = ""
+            st.markdown(
+                f"- `{s.get('steeps','')}` **{s.get('title','')}** "
+                f"{'· ' + str(geo) if geo and geo != 'UNKNOWN' else ''} "
+                f"_{s.get('source_id','')}_ (novelty={s.get('novelty_score',0):.2f})"
+            )
+
+    elif qid == "Q11" and "agenda_setters" in answer:
+        setters = answer.get("agenda_setters") or []
+        if setters:
+            df = pd.DataFrame(setters[:15])
+            if "source_id" in df.columns and "articles_today" in df.columns:
+                st.dataframe(
+                    df[["source_id", "articles_today", "unique_steeps"]].rename(
+                        columns={"source_id": "언론사", "articles_today": "기사수", "unique_steeps": "다양성"}
+                    ),
+                    use_container_width=True, hide_index=True,
+                )
+
+    elif qid == "Q12" and "lean_comparison" in answer:
+        comp = answer.get("lean_comparison") or {}
+        c1, c2 = st.columns(2)
+        for col, lean, label in [(c1, "LEFT", "🔵 진보"), (c2, "RIGHT", "🔴 보수")]:
+            with col:
+                st.markdown(f"**{label}**")
+                steeps_dist = comp.get(lean, {}).get("top_steeps") or {}
+                for k, v in list(steeps_dist.items())[:4]:
+                    st.markdown(f"- `{k}` {v:.0%}")
+
+    elif qid == "Q17" and "clusters" in answer:
+        clusters = answer.get("clusters") or []
+        for idx, cl in enumerate(clusters[:5]):
+            entities = cl.get("entities") or []
+            steeps_list = cl.get("steeps_set") or []
+            st.markdown(
+                f"**클러스터 {idx+1}** — {' · '.join(steeps_list)} "
+                f"({cl.get('article_count',0)}건)"
+            )
+            if entities:
+                st.caption(", ".join(str(e) for e in entities[:8]))
+
+    elif qid == "Q18" and "top_entities" in answer:
+        by_type = answer.get("by_type") or {}
+        tabs_ent = st.tabs(["인물", "기관", "국가"])
+        for tab_e, etype in zip(tabs_ent, ["PERSON", "ORG", "GPE"]):
+            with tab_e:
+                ents = by_type.get(etype) or []
+                for e in ents[:10]:
+                    st.markdown(f"- **{e.get('entity','')}** ({e.get('mention_count',0)}회)")
+
+    else:
+        # Generic: show answer as JSON
+        if answer and not (len(answer) == 1 and "reason" in answer):
+            st.json(answer, expanded=False)
+
+
+with tab_questions:
+    st.header("🔢 18 Core Questions — Big Data Analysis Engine")
+    st.caption(
+        "뉴스 빅데이터 분석의 18개 핵심 질문에 대한 매일 자동 산출 결과. "
+        "`data/answers/{date}/` 기반. 🟢 answered · 🟡 degraded · 🔴 insufficient"
+    )
+
+    # ---- date picker ----
+    _ans_root = DATA_DIR / "answers"
+    _ans_dates = sorted(
+        [d.name for d in _ans_root.iterdir() if d.is_dir() and len(d.name) == 10],
+        reverse=True,
+    ) if _ans_root.exists() else []
+
+    if not _ans_dates:
+        st.warning(
+            "아직 18-Question 결과가 없습니다. "
+            "`python scripts/backfill_enriched.py` 를 실행하세요."
+        )
+    else:
+        _sel_date = st.selectbox(
+            "날짜 선택", _ans_dates, key="q_date_sel",
+            format_func=lambda x: x,
+        )
+        _answers = _load_all_answers(_sel_date)
+        _n_ans = sum(1 for v in _answers.values() if v.get("status") == "answered")
+        _n_deg = sum(1 for v in _answers.values() if v.get("status") == "degraded")
+        _n_ins = sum(1 for v in _answers.values() if v.get("status") == "insufficient_data")
+        _avg_conf = (
+            sum(v.get("confidence", 0) for v in _answers.values()) / len(_answers)
+            if _answers else 0
+        )
+
+        # KPI row
+        kc1, kc2, kc3, kc4 = st.columns(4)
+        kc1.metric("🟢 Answered", _n_ans, f"/ {len(_answers)}",
+                   help="충분한 데이터로 완전 응답된 질문 수. 알고리즘이 신뢰할 수 있는 결론을 도출함.")
+        kc2.metric("🟡 Degraded", _n_deg,
+                   help="데이터가 부족하거나 보조 수단으로 부분 답변한 질문 수. 결과는 있으나 신뢰도가 제한적.")
+        kc3.metric("🔴 Insufficient", _n_ins,
+                   help="최소 데이터 임계값에 미달해 아직 응답 불가한 질문 수. 데이터 누적이 더 필요합니다.\n\n"
+                        "- Q03: 14일 이상 필요\n- Q10: 21일 이상 필요\n- Q16: 30일 이상 필요")
+        kc4.metric("평균 신뢰도", f"{_avg_conf:.0%}",
+                   help="18개 질문의 신뢰도(confidence) 평균. 신뢰도는 0~100%로, 해당 답변의 데이터 충분도와 "
+                        "알고리즘 확신도를 나타냅니다. insufficient 질문(0%)이 평균을 낮춥니다.")
+
+        st.markdown("---")
+
+        # History sparkline
+        _hist_df = _answer_history()
+        if not _hist_df.empty:
+            fig_hist = go.Figure()
+            fig_hist.add_trace(go.Bar(
+                x=_hist_df["date"], y=_hist_df["answered"],
+                name="Answered", marker_color="#2ecc71",
+            ))
+            fig_hist.add_trace(go.Bar(
+                x=_hist_df["date"], y=_hist_df["degraded"],
+                name="Degraded", marker_color="#f1c40f",
+            ))
+            fig_hist.add_trace(go.Bar(
+                x=_hist_df["date"], y=_hist_df["insufficient"],
+                name="Insufficient", marker_color="#e74c3c",
+            ))
+            fig_hist.update_layout(
+                barmode="stack", height=180, margin=dict(t=20, b=20, l=20, r=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1),
+                title="일별 질문 응답 현황 (18문 중)",
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown(f"**{_sel_date} 질문별 상세 결과** — 클릭해서 펼치기")
+
+        # Render all 18 questions grouped by category
+        _groups = [
+            ("트렌드·신호 탐지", ["Q01", "Q02", "Q03", "Q08", "Q09", "Q10"]),
+            ("지정학·지리 분석", ["Q05", "Q06", "Q07"]),
+            ("미디어·프레이밍 분석", ["Q04", "Q11", "Q12", "Q13", "Q14"]),
+            ("엔티티·구조 분석", ["Q17", "Q18"]),
+            ("인과·시계열 분석", ["Q15", "Q16"]),
+        ]
+
+        for group_name, qids in _groups:
+            st.subheader(group_name)
+            for qid in qids:
+                if qid in _answers:
+                    _render_question_card(qid, _answers[qid])
+                else:
+                    st.markdown(f"⚪ **{qid}** — 데이터 없음")
+            st.markdown("")
+
+        # ── Geopolitical Tension Index ────────────────────────────────────
+        st.markdown("---")
+        st.subheader("🌐 Geopolitical Tension Index (GTI)")
+        st.caption(
+            "Q05(국가 감성) · Q06(보도 집중도) · Q07(양국 긴장) 합성 지수. "
+            "0–100 척도: LOW < 30 · MEDIUM 30–60 · HIGH 60–80 · CRITICAL > 80"
+        )
+
+        _gti_hist_path = DATA_DIR / "gti" / "gti_history.jsonl"
+
+        @st.cache_data(ttl=300)
+        def _load_gti_history(path_str: str) -> pd.DataFrame:
+            rows = []
+            try:
+                with open(path_str, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                rows.append(json.loads(line))
+                            except Exception:
+                                pass
+            except FileNotFoundError:
+                pass
+            if not rows:
+                return pd.DataFrame()
+            df = pd.DataFrame(rows)
+            # dedup: keep last per date
+            df = df.drop_duplicates(subset="date", keep="last")
+            return df.sort_values("date")
+
+        @st.cache_data(ttl=300)
+        def _load_gti_daily(date_str: str, gti_dir_str: str) -> dict:
+            p = Path(gti_dir_str) / date_str / "gti_daily.json"
+            if p.exists():
+                try:
+                    return json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            return {}
+
+        _gti_dir = DATA_DIR / "gti"
+        _gti_hist = _load_gti_history(str(_gti_hist_path))
+        _gti_today = _load_gti_daily(_sel_date, str(_gti_dir))
+
+        if _gti_today:
+            gc1, gc2, gc3, gc4 = st.columns(4)
+            _gti_score = _gti_today.get("gti_score", 0)
+            _gti_label = _gti_today.get("gti_label", "N/A")
+            _gti_color = _gti_today.get("gti_color", "#aaa")
+            gc1.metric("GTI 점수", f"{_gti_score:.1f}",
+                       help="Geopolitical Tension Index 종합 점수 (0~100).\n\n"
+                            "G1×0.40 + G2×0.35 + G3×0.25 가중 합산.")
+            gc2.metric("등급", _gti_label,
+                       help="LOW: 0~30 (낮은 긴장) · MEDIUM: 30~60 · HIGH: 60~80 · CRITICAL: 80~100")
+            _comps = _gti_today.get("components", {})
+            gc3.metric("G1 보도집중도", f"{_comps.get('g1_coverage_skew', 0):.1f}",
+                       help="G1: 지역별 보도 집중도 편차 지수 (0~100).\n\n"
+                            "특정 지역에 보도가 집중될수록 높아집니다. "
+                            "지니 계수 + 상위 3개 지역 집중도 + 다크 코너 비율로 산출.")
+            gc4.metric("G2 핫스팟", f"{_comps.get('g2_sentiment_hotspot', 0):.1f}",
+                       help="G2: 지정학적 핫스팟 국가(미국·중국·러시아·이란 등 18개국) 보도 집중도 + 부정 감성 강도.\n\n"
+                            "핫스팟 국가 기사 비율(60%) + 부정 감성 점수(40%) 합산.")
+
+        if not _gti_hist.empty:
+            _label_color = {"LOW": "#2ecc71", "MEDIUM": "#f1c40f", "HIGH": "#e67e22", "CRITICAL": "#e74c3c"}
+            fig_gti = go.Figure()
+            fig_gti.add_trace(go.Scatter(
+                x=_gti_hist["date"], y=_gti_hist["gti_score"],
+                mode="lines+markers",
+                line=dict(color="#3498db", width=2),
+                name="GTI",
+            ))
+            fig_gti.add_hrect(y0=0, y1=30, fillcolor="#2ecc71", opacity=0.1, line_width=0, annotation_text="LOW", annotation_position="left")
+            fig_gti.add_hrect(y0=30, y1=60, fillcolor="#f1c40f", opacity=0.1, line_width=0, annotation_text="MEDIUM", annotation_position="left")
+            fig_gti.add_hrect(y0=60, y1=80, fillcolor="#e67e22", opacity=0.1, line_width=0, annotation_text="HIGH", annotation_position="left")
+            fig_gti.add_hrect(y0=80, y1=100, fillcolor="#e74c3c", opacity=0.1, line_width=0, annotation_text="CRITICAL", annotation_position="left")
+            fig_gti.update_layout(
+                height=300, margin=dict(t=20, b=30, l=60, r=20),
+                yaxis=dict(range=[0, 100], title="GTI 점수"),
+                title="GTI 시계열 추이",
+            )
+            st.plotly_chart(fig_gti, use_container_width=True)
+
+        # ── Future Signal Portfolio ──────────────────────────────────────
+        st.markdown("---")
+        st.subheader("📡 Future Signal Portfolio")
+        st.caption(
+            "Q08(약한 신호 탐지) 결과를 날짜별로 누적 추적. "
+            "watching(신규) → emerging(3일+) → confirmed(7일+). "
+            "`data/signal_portfolio.yaml` 기반."
+        )
+
+        _port_path = DATA_DIR / "signal_portfolio.yaml"
+
+        @st.cache_data(ttl=300)
+        def _load_portfolio_cached(path_str: str) -> dict:
+            from src.analysis.signal_portfolio import load_portfolio as _lp
+            return _lp(Path(path_str))
+
+        if not _port_path.exists():
+            st.info(
+                "포트폴리오 아직 없습니다. "
+                "`python src/analysis/signal_portfolio.py` 를 실행하세요."
+            )
+        else:
+            _port = _load_portfolio_cached(str(_port_path))
+            _sigs = _port.get("signals", {})
+            _status_counts = {s: 0 for s in ("watching", "emerging", "confirmed", "dismissed")}
+            for _e in _sigs.values():
+                _st = _e.get("status", "watching")
+                if _st in _status_counts:
+                    _status_counts[_st] += 1
+
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            pc1.metric("🔵 Watching", _status_counts["watching"],
+                       help="최초 탐지된 신호. 아직 반복 등장 여부 확인 중. 새로 포착된 모든 약한 신호가 여기서 시작됩니다.")
+            pc2.metric("🟡 Emerging (3d+)", _status_counts["emerging"],
+                       help="3일 이상 연속 등장한 신호. 단발성이 아닌 지속적 흐름으로 부상 중.")
+            pc3.metric("🟢 Confirmed (7d+)", _status_counts["confirmed"],
+                       help="7일 이상 지속된 신호. 약한 신호에서 실질적 트렌드로 전환 확인된 항목.")
+            pc4.metric("⬛ Dismissed", _status_counts["dismissed"],
+                       help="14일 이상 재등장하지 않아 소멸로 판정된 신호. 반짝 이슈였거나 순환적 노이즈.")
+            st.caption(f"마지막 업데이트: {_port.get('last_updated', '알 수 없음')} | 총 {len(_sigs)}개 신호 추적")
+
+            _active_tab, _confirmed_tab = st.tabs(["활성 신호", "Confirmed"])
+            with _active_tab:
+                _rows = []
+                for _sl, _e in _sigs.items():
+                    if _e.get("status") in ("dismissed",):
+                        continue
+                    _rows.append({
+                        "상태": _e.get("status", ""),
+                        "제목": _e.get("title", "")[:60],
+                        "STEEPS": _e.get("steeps", ""),
+                        "지역": _e.get("geo_focus", ""),
+                        "추적일수": len(set(_e.get("seen_dates", []))),
+                        "최근등장": _e.get("last_seen", ""),
+                        "novelty": round(_e.get("novelty_score", 0), 2),
+                    })
+                if _rows:
+                    _port_df = pd.DataFrame(_rows).sort_values(
+                        ["추적일수", "novelty"], ascending=[False, False]
+                    )
+                    st.dataframe(_port_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("활성 신호 없음")
+
+            with _confirmed_tab:
+                _conf_rows = [
+                    {
+                        "제목": _e.get("title", "")[:70],
+                        "STEEPS": _e.get("steeps", ""),
+                        "지역": _e.get("geo_focus", ""),
+                        "추적일수": len(set(_e.get("seen_dates", []))),
+                        "최초탐지": _e.get("first_detected", ""),
+                        "확정일": _e.get("confirmed_date", ""),
+                    }
+                    for _e in _sigs.values() if _e.get("status") == "confirmed"
+                ]
+                if _conf_rows:
+                    st.dataframe(pd.DataFrame(_conf_rows), use_container_width=True, hide_index=True)
+                else:
+                    st.info("아직 confirmed 신호 없음 (7일 이상 지속 시 자동 승격)")
+
+        # ── Weekly Future Map ─────────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("🗺️ 주간 미래 맵")
+        st.caption(
+            "18문 + GTI + Signal Portfolio 종합 주간 보고서. "
+            "`reports/weekly_future_map/{YYYY-Www}/future_map.md` 기반."
+        )
+
+        _wfm_root = DATA_DIR.parent / "reports" / "weekly_future_map"
+
+        @st.cache_data(ttl=300)
+        def _list_weekly_maps(dir_str: str) -> list[str]:
+            d = Path(dir_str)
+            if not d.exists():
+                return []
+            return sorted(
+                [p.name for p in d.iterdir()
+                 if p.is_dir() and not p.name.startswith("__")],
+                reverse=True,
+            )
+
+        _wfm_editions = _list_weekly_maps(str(_wfm_root))
+        if not _wfm_editions:
+            st.info(
+                "주간 미래 맵이 아직 없습니다. "
+                "`python src/analysis/weekly_future_map.py --end-date YYYY-MM-DD` 실행."
+            )
+        else:
+            _sel_week = st.selectbox("주차 선택", _wfm_editions, key="wfm_week_sel")
+            _wfm_path = _wfm_root / _sel_week / "future_map.md"
+            _wfm_meta_path = _wfm_root / _sel_week / "meta.json"
+
+            if _wfm_meta_path.exists():
+                _wfm_meta = json.loads(_wfm_meta_path.read_text(encoding="utf-8"))
+                wm1, wm2, wm3, wm4 = st.columns(4)
+                wm1.metric("주차", _wfm_meta.get("week_label", ""),
+                           help="ISO 주차 표기 (YYYY-Www). 해당 주의 마지막 날(종료일) 기준으로 생성됩니다.")
+                wm2.metric("데이터 커버리지", f"{_wfm_meta.get('dates_with_data',0)}/{_wfm_meta.get('window_days',7)}일",
+                           help="해당 주 7일 중 실제 분석 데이터(articles_enriched.parquet)가 존재하는 날짜 수. "
+                                "커버리지가 낮을수록 보고서의 신뢰도가 낮아집니다.")
+                wm3.metric("GTI 평균", f"{_wfm_meta.get('gti_avg',0):.1f}",
+                           help="해당 주의 일별 GTI 점수 평균. 주간 지정학적 긴장 수준을 나타냅니다.")
+                wm4.metric("GTI 등급", _wfm_meta.get("gti_label", "").split()[0],
+                           help="주간 평균 GTI 기반 등급.\n\nLOW(<30) · MEDIUM(30-60) · HIGH(60-80) · CRITICAL(>80)")
+
+            if _wfm_path.exists():
+                st.markdown(_wfm_path.read_text(encoding="utf-8"))

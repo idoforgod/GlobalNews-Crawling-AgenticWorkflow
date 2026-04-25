@@ -616,6 +616,61 @@ main() {
         fi
     fi
 
+    # Step 6.7: BigData Engine — Enriched + 18문 + GTI + Portfolio + Weekly Map
+    # Pipeline.py post-processing already runs these, but this ensures they
+    # also run on partial-success days (e.g., W2 only) and produces the
+    # weekly future map regardless of DCI/WF5 completion.
+    if [[ ${pipeline_result} -eq 0 ]]; then
+        log_info "Step 6.7: BigData Engine (Enriched · 18문 · GTI · Portfolio · WeeklyMap)..."
+
+        local bd_log="${LOG_DIR}/daily/bigdata-engine-${TARGET_DATE}.log"
+        mkdir -p "${LOG_DIR}/daily"
+
+        # 6.7a: Enriched Assembly + 18-Question Engine (incremental — skip if done)
+        "${PYTHON}" "${PROJECT_DIR}/scripts/backfill_enriched.py" \
+            --date "${TARGET_DATE}" --project-dir "${PROJECT_DIR}" \
+            >> "${bd_log}" 2>&1 \
+            && log_info "  6.7a: Enriched + 18문 OK" \
+            || log_warn "  6.7a: Enriched/18문 failed — see ${bd_log}"
+
+        # 6.7b: GTI
+        "${PYTHON}" -c "
+import sys; sys.path.insert(0, '${PROJECT_DIR}')
+from src.analysis.gti import run_gti
+r = run_gti('${TARGET_DATE}', '${PROJECT_DIR}')
+print(f'GTI {r[\"date\"]}: {r[\"gti_score\"]:.1f} ({r[\"gti_label\"]})')
+" >> "${bd_log}" 2>&1 \
+            && log_info "  6.7b: GTI OK" \
+            || log_warn "  6.7b: GTI failed"
+
+        # 6.7c: Signal Portfolio update
+        "${PYTHON}" -c "
+import sys; sys.path.insert(0, '${PROJECT_DIR}')
+from pathlib import Path
+from src.analysis.signal_portfolio import update_portfolio, portfolio_summary
+port_path = Path('${PROJECT_DIR}') / 'data' / 'signal_portfolio.yaml'
+ans_dir   = Path('${PROJECT_DIR}') / 'data' / 'answers'
+stats = update_portfolio(port_path, ans_dir, lookback_days=30)
+print(f'Portfolio: +{stats[\"added\"]} added, +{stats[\"promoted\"]} promoted, {stats[\"dismissed\"]} dismissed, total={stats[\"total\"]}')
+" >> "${bd_log}" 2>&1 \
+            && log_info "  6.7c: Signal Portfolio OK" \
+            || log_warn "  6.7c: Signal Portfolio failed"
+
+        # 6.7d: Weekly Future Map
+        "${PYTHON}" -c "
+import sys; sys.path.insert(0, '${PROJECT_DIR}')
+from pathlib import Path
+from datetime import datetime
+from src.analysis.weekly_future_map import generate_weekly_future_map
+meta = generate_weekly_future_map(datetime.strptime('${TARGET_DATE}', '%Y-%m-%d'), Path('${PROJECT_DIR}'), window_days=7)
+print(f'Weekly map: {meta[\"week_label\"]} | {meta[\"dates_with_data\"]}/{meta[\"window_days\"]}d | GTI={meta[\"gti_avg\"]:.1f}')
+" >> "${bd_log}" 2>&1 \
+            && log_info "  6.7d: Weekly Future Map OK" \
+            || log_warn "  6.7d: Weekly Future Map failed"
+
+        log_info "Step 6.7 done — see ${bd_log}"
+    fi
+
     # Step 7: Generate daily summary
     log_info "============================================"
     if [[ ${pipeline_result} -eq 0 ]]; then

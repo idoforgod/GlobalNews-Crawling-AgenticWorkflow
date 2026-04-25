@@ -1,0 +1,373 @@
+# Country → Continent mapping for WF5 Personal Newspaper (ADR-083).
+#
+# ISO 3166-1 alpha-2 country codes → one of 6 continents:
+#   africa, asia, europe, north_america, south_america, oceania
+#
+# Also site_id → primary_country mapping for the 116 crawl sources
+# (sources.yaml already has `region` + `language`; this adds country
+# granularity without mutating sources.yaml).
+#
+# D-7 intentional duplication with src/insights/m5_geopolitical.py's
+# country extraction — M5 extracts from article text (downstream),
+# this file provides the crawl-origin ground truth (upstream).
+
+continents:
+  africa:
+    - DZ  # Algeria
+    - AO  # Angola
+    - BJ  # Benin
+    - BW  # Botswana
+    - BF  # Burkina Faso
+    - BI  # Burundi
+    - CM  # Cameroon
+    - CV  # Cape Verde
+    - CF  # Central African Republic
+    - TD  # Chad
+    - KM  # Comoros
+    - CG  # Republic of the Congo
+    - CD  # Democratic Republic of the Congo
+    - CI  # Cote d'Ivoire
+    - DJ  # Djibouti
+    - EG  # Egypt
+    - GQ  # Equatorial Guinea
+    - ER  # Eritrea
+    - SZ  # Eswatini
+    - ET  # Ethiopia
+    - GA  # Gabon
+    - GM  # Gambia
+    - GH  # Ghana
+    - GN  # Guinea
+    - GW  # Guinea-Bissau
+    - KE  # Kenya
+    - LS  # Lesotho
+    - LR  # Liberia
+    - LY  # Libya
+    - MG  # Madagascar
+    - MW  # Malawi
+    - ML  # Mali
+    - MR  # Mauritania
+    - MU  # Mauritius
+    - MA  # Morocco
+    - MZ  # Mozambique
+    - NA  # Namibia
+    - NE  # Niger
+    - NG  # Nigeria
+    - RW  # Rwanda
+    - ST  # Sao Tome and Principe
+    - SN  # Senegal
+    - SC  # Seychelles
+    - SL  # Sierra Leone
+    - SO  # Somalia
+    - ZA  # South Africa
+    - SS  # South Sudan
+    - SD  # Sudan
+    - TZ  # Tanzania
+    - TG  # Togo
+    - TN  # Tunisia
+    - UG  # Uganda
+    - ZM  # Zambia
+    - ZW  # Zimbabwe
+
+  asia:
+    - AF  # Afghanistan
+    - AM  # Armenia
+    - AZ  # Azerbaijan
+    - BH  # Bahrain
+    - BD  # Bangladesh
+    - BT  # Bhutan
+    - BN  # Brunei
+    - KH  # Cambodia
+    - CN  # China
+    - CY  # Cyprus
+    - GE  # Georgia
+    - HK  # Hong Kong
+    - IN  # India
+    - ID  # Indonesia
+    - IR  # Iran
+    - IQ  # Iraq
+    - IL  # Israel
+    - JP  # Japan
+    - JO  # Jordan
+    - KZ  # Kazakhstan
+    - KW  # Kuwait
+    - KG  # Kyrgyzstan
+    - LA  # Laos
+    - LB  # Lebanon
+    - MO  # Macao
+    - MY  # Malaysia
+    - MV  # Maldives
+    - MN  # Mongolia
+    - MM  # Myanmar
+    - NP  # Nepal
+    - KP  # North Korea
+    - OM  # Oman
+    - PK  # Pakistan
+    - PS  # Palestine
+    - PH  # Philippines
+    - QA  # Qatar
+    - SA  # Saudi Arabia
+    - SG  # Singapore
+    - KR  # South Korea
+    - LK  # Sri Lanka
+    - SY  # Syria
+    - TW  # Taiwan
+    - TJ  # Tajikistan
+    - TH  # Thailand
+    - TL  # Timor-Leste
+    - TR  # Turkey
+    - TM  # Turkmenistan
+    - AE  # United Arab Emirates
+    - UZ  # Uzbekistan
+    - VN  # Vietnam
+    - YE  # Yemen
+
+  europe:
+    - AL  # Albania
+    - AD  # Andorra
+    - AT  # Austria
+    - BY  # Belarus
+    - BE  # Belgium
+    - BA  # Bosnia and Herzegovina
+    - BG  # Bulgaria
+    - HR  # Croatia
+    - CZ  # Czech Republic
+    - DK  # Denmark
+    - EE  # Estonia
+    - FI  # Finland
+    - FR  # France
+    - DE  # Germany
+    - GR  # Greece
+    - HU  # Hungary
+    - IS  # Iceland
+    - IE  # Ireland
+    - IT  # Italy
+    - XK  # Kosovo
+    - LV  # Latvia
+    - LI  # Liechtenstein
+    - LT  # Lithuania
+    - LU  # Luxembourg
+    - MT  # Malta
+    - MD  # Moldova
+    - MC  # Monaco
+    - ME  # Montenegro
+    - NL  # Netherlands
+    - MK  # North Macedonia
+    - "NO"  # Norway (quoted — YAML interprets NO as boolean)
+    - PL  # Poland
+    - PT  # Portugal
+    - RO  # Romania
+    - RU  # Russia
+    - SM  # San Marino
+    - RS  # Serbia
+    - SK  # Slovakia
+    - SI  # Slovenia
+    - ES  # Spain
+    - SE  # Sweden
+    - CH  # Switzerland
+    - UA  # Ukraine
+    - GB  # United Kingdom
+    - VA  # Vatican City
+
+  north_america:
+    - AG  # Antigua and Barbuda
+    - BS  # Bahamas
+    - BB  # Barbados
+    - BZ  # Belize
+    - CA  # Canada
+    - CR  # Costa Rica
+    - CU  # Cuba
+    - DM  # Dominica
+    - DO  # Dominican Republic
+    - SV  # El Salvador
+    - GD  # Grenada
+    - GT  # Guatemala
+    - HT  # Haiti
+    - HN  # Honduras
+    - JM  # Jamaica
+    - MX  # Mexico
+    - NI  # Nicaragua
+    - PA  # Panama
+    - KN  # Saint Kitts and Nevis
+    - LC  # Saint Lucia
+    - VC  # Saint Vincent and the Grenadines
+    - TT  # Trinidad and Tobago
+    - US  # United States
+
+  south_america:
+    - AR  # Argentina
+    - BO  # Bolivia
+    - BR  # Brazil
+    - CL  # Chile
+    - CO  # Colombia
+    - EC  # Ecuador
+    - GY  # Guyana
+    - PY  # Paraguay
+    - PE  # Peru
+    - SR  # Suriname
+    - UY  # Uruguay
+    - VE  # Venezuela
+
+  oceania:
+    - AU  # Australia
+    - FJ  # Fiji
+    - KI  # Kiribati
+    - MH  # Marshall Islands
+    - FM  # Micronesia
+    - NR  # Nauru
+    - NZ  # New Zealand
+    - PW  # Palau
+    - PG  # Papua New Guinea
+    - WS  # Samoa
+    - SB  # Solomon Islands
+    - TO  # Tonga
+    - TV  # Tuvalu
+    - VU  # Vanuatu
+
+
+# Site ID → primary country/language (ties to sources.yaml region field).
+# Used for Phase 2 source triangulation & Phase 3 continental organization.
+# Keys MUST match sources.yaml site id. If a source covers multiple
+# countries (e.g., Al Jazeera, Reuters), list primary only — secondary
+# coverage is inferred from article content via M5.
+site_primary_country:
+  # Korea (kr region — 38 sites)
+  chosun: KR
+  donga: KR
+  yna: KR
+  hani: KR
+  joongang: KR
+  khan: KR
+  ohmynews: KR
+  pressian: KR
+  seoul: KR
+  mbn: KR
+  segye: KR
+  jtbc: KR
+  sbs: KR
+  kbs: KR
+  mbc: KR
+  ytn: KR
+  newsis: KR
+  newdaily: KR
+  money_today: KR
+  etnews: KR
+  bloter: KR
+  financial_news: KR
+  hankyung: KR
+  mk: KR
+  businesspost: KR
+  daily_nk: KR
+  zdnet_korea: KR
+  digitaltoday: KR
+  inews24: KR
+  economic_times_korea: KR
+  korea_times: KR
+  koreatimes: KR
+  koreaherald: KR
+  pressman: KR
+  newsonekorea: KR
+
+  # English-language Western (27 sites — Group E)
+  bbc: GB
+  reuters: GB
+  guardian: GB
+  thetimes: GB
+  ft: GB
+  economist: GB
+  nytimes: US
+  wsj: US
+  washingtonpost: US
+  bloomberg: US
+  cnn: US
+  npr: US
+  abcnews: US
+  nbcnews: US
+  cbsnews: US
+  foxnews: US
+  cbs_moneywatch: US
+  usatoday: US
+  huffpost: US
+  buzzfeed: US
+  reason: US
+  dailysignal: US
+  breitbart: US
+  aljazeera_en: QA
+  aljazeera: QA
+
+  # Asia-Pacific (Group F)
+  japantimes: JP
+  yomiuri: JP
+  asahi: JP
+  nikkei: JP
+  scmp: HK
+  cgtn: CN
+  taiwannews: TW
+  indiatvnews: IN
+  hindustan_times: IN
+  economic_times_india: IN
+  bangkokpost: TH
+  jakartapost: ID
+  straitstimes: SG
+  abs_cbn: PH
+  inquirer_newsinfo: PH
+  nhk_world: JP
+  korea_herald: KR
+
+  # Europe/Middle East (Groups G+H)
+  spiegel: DE
+  welt: DE
+  taz: DE
+  sueddeutsche: DE
+  lefigaro: FR
+  lemonde: FR
+  france24: FR
+  france24_en: FR
+  elpais: ES
+  abc_spain: ES
+  elmundo: ES
+  repubblica: IT
+  corriere: IT
+  ansa: IT
+  lastampa: IT
+  trtworld: TR
+  dailysabah: TR
+  haaretz: IL
+  jordan_news: JO
+  novinky: CZ
+  iceland_review: IS
+  the_sofia_globe: BG
+  die_welt: DE
+  pap: PL
+  polsatnews: PL
+  n1info_ba: BA
+  tv2_no: "NO"
+  aftonbladet: SE
+
+  # Africa (Group I)
+  allafrica: CI
+  standardmedia: KE
+  dailynationafrica: KE
+  guardian_nigeria: NG
+  punch: NG
+  premiumtimes: NG
+  mail_guardian: ZA
+  iol: ZA
+  dailymaverick: ZA
+  ahram: EG
+  africanews: CG
+
+  # Latin America (Group J)
+  oglobo: BR
+  lanacion_ar: AR
+  latercera: CL
+  eluniversal_mx: MX
+  clarin: AR
+  eluniverso: EC
+
+  # Multilateral / other
+  unnews: US        # UN News (treat as US/HQ for classification)
+  newsglobal: US
+
+# Default fallback for sites not listed above
+default_country: ZZ
+default_continent: asia   # Korean-majority project default

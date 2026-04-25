@@ -1,0 +1,360 @@
+# Cross-lingual entity aliases for WF5 story triangulation (ADR-083 Fix-A).
+#
+# Problem (diagnosed on 2026-04-14 corpus): only 11/2219 clusters were
+# triangulated because articles covering the same event in different
+# languages use non-overlapping tokens ("Trump" vs "트럼프" vs "トランプ"
+# vs "特朗普"). SimHash + token-Jaccard is blind to this.
+#
+# Solution: curated canonical-entity alias dictionary, merged into each
+# article's entity set BEFORE clustering. The story_clusterer then sees
+# overlapping canonical IDs and triangulates correctly.
+#
+# Structure:
+#   each entity has a canonical_id (Wikidata-like, lowercase snake_case)
+#   aliases: list of surface forms across languages
+#   type: person | country | org | event | region
+#
+# Coverage priority: top-100 geopolitical + top-50 economic actors.
+# Curated manually; not exhaustive — falls back gracefully to token
+# matching for unlisted entities.
+
+entities:
+
+  # -------- World leaders (current + recent) --------
+  - canonical_id: donald_trump
+    type: person
+    aliases: ["Trump", "Donald Trump", "트럼프", "도널드 트럼프",
+              "トランプ", "ドナルド・トランプ", "特朗普", "Trumps",
+              "DJT", "President Trump", "트럼프 대통령"]
+  - canonical_id: xi_jinping
+    type: person
+    aliases: ["Xi Jinping", "Xi", "시진핑", "習近平", "习近平",
+              "시 주석", "Xi Jinping", "President Xi"]
+  - canonical_id: vladimir_putin
+    type: person
+    aliases: ["Putin", "Vladimir Putin", "푸틴", "블라디미르 푸틴",
+              "プーチン", "普京", "President Putin"]
+  - canonical_id: joe_biden
+    type: person
+    aliases: ["Biden", "Joe Biden", "바이든", "조 바이든",
+              "バイデン", "拜登"]
+  - canonical_id: kim_jong_un
+    type: person
+    aliases: ["Kim Jong Un", "Kim Jong-un", "김정은", "金正恩",
+              "金正恩", "Kim"]
+  - canonical_id: emmanuel_macron
+    type: person
+    aliases: ["Macron", "Emmanuel Macron", "마크롱", "에마뉘엘 마크롱",
+              "マクロン", "马克龙"]
+  - canonical_id: olaf_scholz
+    type: person
+    aliases: ["Scholz", "Olaf Scholz", "숄츠", "올라프 숄츠",
+              "ショルツ"]
+  - canonical_id: friedrich_merz
+    type: person
+    aliases: ["Merz", "Friedrich Merz", "메르츠", "프리드리히 메르츠"]
+  - canonical_id: keir_starmer
+    type: person
+    aliases: ["Starmer", "Keir Starmer", "스타머", "키어 스타머"]
+  - canonical_id: narendra_modi
+    type: person
+    aliases: ["Modi", "Narendra Modi", "모디", "나렌드라 모디",
+              "モディ", "莫迪"]
+  - canonical_id: fumio_kishida
+    type: person
+    aliases: ["Kishida", "Fumio Kishida", "기시다", "기시다 후미오",
+              "岸田", "岸田文雄"]
+  - canonical_id: shigeru_ishiba
+    type: person
+    aliases: ["Ishiba", "Shigeru Ishiba", "이시바", "이시바 시게루",
+              "石破", "石破茂"]
+  - canonical_id: lee_jae_myung
+    type: person
+    aliases: ["Lee Jae-myung", "Lee Jae Myung", "이재명"]
+  - canonical_id: recep_tayyip_erdogan
+    type: person
+    aliases: ["Erdogan", "Erdoğan", "Recep Tayyip Erdoğan",
+              "에르도안", "에르도안 대통령", "エルドアン", "埃尔多安"]
+  - canonical_id: benjamin_netanyahu
+    type: person
+    aliases: ["Netanyahu", "Benjamin Netanyahu", "네타냐후",
+              "네타냐후 총리", "ネタニヤフ", "内塔尼亚胡"]
+  - canonical_id: ali_khamenei
+    type: person
+    aliases: ["Khamenei", "Ali Khamenei", "하메네이", "알리 하메네이"]
+  - canonical_id: volodymyr_zelensky
+    type: person
+    aliases: ["Zelensky", "Volodymyr Zelensky", "Zelenskyy",
+              "젤렌스키", "볼로디미르 젤렌스키", "ゼレンスキー"]
+  - canonical_id: pope_leo_xiv
+    type: person
+    aliases: ["Pope Leo", "Leo XIV", "Pope Leo XIV", "레오 14세",
+              "교황 레오", "Papa Leone", "教皇"]
+  - canonical_id: viktor_orban
+    type: person
+    aliases: ["Orban", "Orbán", "Viktor Orbán", "오르반", "빅토르 오르반"]
+  - canonical_id: jd_vance
+    type: person
+    aliases: ["Vance", "JD Vance", "J.D. Vance", "밴스", "JD 밴스"]
+
+  # -------- Countries (where multilingual coverage matters most) --------
+  - canonical_id: united_states
+    type: country
+    iso: US
+    aliases: ["USA", "United States", "US", "U.S.", "America", "미국",
+              "미合衆国", "アメリカ", "美国", "米国", "Estados Unidos",
+              "Vereinigte Staaten", "États-Unis", "the U.S."]
+  - canonical_id: china
+    type: country
+    iso: CN
+    aliases: ["China", "PRC", "중국", "中国", "China", "中國",
+              "Chine", "Cina"]
+  - canonical_id: russia
+    type: country
+    iso: RU
+    aliases: ["Russia", "Russian Federation", "러시아", "ロシア",
+              "俄罗斯", "Rusia", "Russland", "Russie"]
+  - canonical_id: iran
+    type: country
+    iso: IR
+    aliases: ["Iran", "Islamic Republic of Iran", "이란", "イラン",
+              "伊朗", "Irán"]
+  - canonical_id: israel
+    type: country
+    iso: IL
+    aliases: ["Israel", "이스라엘", "イスラエル", "以色列", "Israël"]
+  - canonical_id: south_korea
+    type: country
+    iso: KR
+    aliases: ["South Korea", "Republic of Korea", "Korea",
+              "한국", "대한민국", "韓国", "韩国", "Corée du Sud"]
+  - canonical_id: north_korea
+    type: country
+    iso: KP
+    aliases: ["North Korea", "DPRK", "Democratic People's Republic of Korea",
+              "북한", "북조선", "朝鮮", "北朝鮮", "朝鲜", "Corée du Nord"]
+  - canonical_id: japan
+    type: country
+    iso: JP
+    aliases: ["Japan", "일본", "日本", "Japón", "Japon"]
+  - canonical_id: taiwan
+    type: country
+    iso: TW
+    aliases: ["Taiwan", "Republic of China", "ROC", "대만", "台湾",
+              "타이완", "台灣"]
+  - canonical_id: ukraine
+    type: country
+    iso: UA
+    aliases: ["Ukraine", "우크라이나", "ウクライナ", "乌克兰", "Ucrania"]
+  - canonical_id: germany
+    type: country
+    iso: DE
+    aliases: ["Germany", "독일", "ドイツ", "德国", "Alemania",
+              "Allemagne", "Deutschland"]
+  - canonical_id: france
+    type: country
+    iso: FR
+    aliases: ["France", "프랑스", "フランス", "法国", "Francia"]
+  - canonical_id: united_kingdom
+    type: country
+    iso: GB
+    aliases: ["UK", "United Kingdom", "Britain", "Great Britain",
+              "England", "영국", "イギリス", "英国", "Reino Unido"]
+  - canonical_id: india
+    type: country
+    iso: IN
+    aliases: ["India", "인도", "インド", "印度", "Inde"]
+  - canonical_id: pakistan
+    type: country
+    iso: PK
+    aliases: ["Pakistan", "파키스탄", "パキスタン", "巴基斯坦"]
+  - canonical_id: turkey
+    type: country
+    iso: TR
+    aliases: ["Turkey", "Türkiye", "Turkiye", "터키", "튀르키예",
+              "トルコ", "土耳其", "Turquía"]
+  - canonical_id: italy
+    type: country
+    iso: IT
+    aliases: ["Italy", "이탈리아", "イタリア", "意大利", "Italia"]
+  - canonical_id: spain
+    type: country
+    iso: ES
+    aliases: ["Spain", "스페인", "スペイン", "西班牙", "España"]
+  - canonical_id: mexico
+    type: country
+    iso: MX
+    aliases: ["Mexico", "México", "멕시코", "メキシコ", "墨西哥"]
+  - canonical_id: brazil
+    type: country
+    iso: BR
+    aliases: ["Brazil", "브라질", "ブラジル", "巴西", "Brasil"]
+  - canonical_id: saudi_arabia
+    type: country
+    iso: SA
+    aliases: ["Saudi Arabia", "Saudi", "사우디아라비아", "사우디",
+              "サウジアラビア", "沙特阿拉伯"]
+  - canonical_id: hungary
+    type: country
+    iso: HU
+    aliases: ["Hungary", "헝가리", "ハンガリー", "匈牙利", "Hungría"]
+  - canonical_id: poland
+    type: country
+    iso: PL
+    aliases: ["Poland", "폴란드", "ポーランド", "波兰", "Polonia"]
+  - canonical_id: philippines
+    type: country
+    iso: PH
+    aliases: ["Philippines", "Phillipines", "필리핀", "フィリピン", "菲律宾"]
+  - canonical_id: indonesia
+    type: country
+    iso: ID
+    aliases: ["Indonesia", "인도네시아", "インドネシア", "印尼"]
+  - canonical_id: kenya
+    type: country
+    iso: KE
+    aliases: ["Kenya", "케냐", "ケニア", "肯尼亚"]
+  - canonical_id: nigeria
+    type: country
+    iso: NG
+    aliases: ["Nigeria", "나이지리아", "ナイジェリア", "尼日利亚"]
+  - canonical_id: south_africa
+    type: country
+    iso: ZA
+    aliases: ["South Africa", "남아공", "남아프리카공화국",
+              "南アフリカ", "南非", "Sudáfrica"]
+  - canonical_id: egypt
+    type: country
+    iso: EG
+    aliases: ["Egypt", "이집트", "エジプト", "埃及"]
+  - canonical_id: argentina
+    type: country
+    iso: AR
+    aliases: ["Argentina", "아르헨티나", "アルゼンチン", "阿根廷"]
+  - canonical_id: australia
+    type: country
+    iso: AU
+    aliases: ["Australia", "호주", "オーストラリア", "澳大利亚"]
+  - canonical_id: new_zealand
+    type: country
+    iso: NZ
+    aliases: ["New Zealand", "뉴질랜드", "ニュージーランド", "新西兰"]
+
+  # -------- Capital cities (frequent triangulation anchors) --------
+  - canonical_id: beijing
+    type: region
+    aliases: ["Beijing", "베이징", "북경", "北京", "Pékin"]
+  - canonical_id: washington
+    type: region
+    aliases: ["Washington", "워싱턴", "ワシントン", "华盛顿",
+              "D.C.", "DC", "Washington D.C."]
+  - canonical_id: tokyo
+    type: region
+    aliases: ["Tokyo", "도쿄", "東京"]
+  - canonical_id: seoul
+    type: region
+    aliases: ["Seoul", "서울", "ソウル", "首尔"]
+  - canonical_id: tehran
+    type: region
+    aliases: ["Tehran", "테헤란", "テヘラン", "德黑兰"]
+  - canonical_id: moscow
+    type: region
+    aliases: ["Moscow", "모스크바", "モスクワ", "莫斯科"]
+  - canonical_id: kyiv
+    type: region
+    aliases: ["Kyiv", "Kiev", "키이우", "キエフ", "基辅"]
+  - canonical_id: jerusalem
+    type: region
+    aliases: ["Jerusalem", "예루살렘", "エルサレム", "耶路撒冷"]
+  - canonical_id: gaza
+    type: region
+    aliases: ["Gaza", "가자", "가자지구", "ガザ", "加沙"]
+
+  # -------- Key organizations & events --------
+  - canonical_id: un
+    type: org
+    aliases: ["UN", "United Nations", "U.N.", "유엔", "국제연합",
+              "国連", "联合国", "ONU"]
+  - canonical_id: nato
+    type: org
+    aliases: ["NATO", "Nato", "N.A.T.O.", "나토", "北約", "北约"]
+  - canonical_id: eu
+    type: org
+    aliases: ["EU", "European Union", "유럽연합", "欧盟", "欧州連合",
+              "UE"]
+  - canonical_id: wto
+    type: org
+    aliases: ["WTO", "World Trade Organization", "세계무역기구",
+              "世界貿易機関", "世贸组织"]
+  - canonical_id: imf
+    type: org
+    aliases: ["IMF", "International Monetary Fund", "국제통화기금",
+              "国際通貨基金", "国际货币基金组织"]
+  - canonical_id: federal_reserve
+    type: org
+    aliases: ["Fed", "Federal Reserve", "미 연준", "연준",
+              "FRB", "美联储", "FED"]
+  - canonical_id: opec
+    type: org
+    aliases: ["OPEC", "OPEC+", "OPEC Plus", "석유수출국기구"]
+
+  # -------- Economic / market actors --------
+  - canonical_id: nvidia
+    type: org
+    aliases: ["Nvidia", "NVDA", "엔비디아", "エヌビディア", "英伟达"]
+  - canonical_id: apple_inc
+    type: org
+    aliases: ["Apple", "AAPL", "애플", "アップル", "苹果"]
+  - canonical_id: google
+    type: org
+    aliases: ["Google", "GOOGL", "GOOG", "Alphabet", "구글", "グーグル", "谷歌"]
+  - canonical_id: microsoft
+    type: org
+    aliases: ["Microsoft", "MSFT", "마이크로소프트", "マイクロソフト", "微软"]
+  - canonical_id: tesla_inc
+    type: org
+    aliases: ["Tesla", "TSLA", "테슬라", "テスラ", "特斯拉"]
+  - canonical_id: amazon
+    type: org
+    aliases: ["Amazon", "AMZN", "아마존", "アマゾン", "亚马逊"]
+  - canonical_id: openai
+    type: org
+    aliases: ["OpenAI", "Open AI", "오픈AI", "オープンAI"]
+  - canonical_id: anthropic
+    type: org
+    aliases: ["Anthropic", "앤트로픽", "アンスロピック"]
+  - canonical_id: meta_platforms
+    type: org
+    aliases: ["Meta", "Meta Platforms", "Facebook", "FB", "메타",
+              "メタ", "脸书"]
+  - canonical_id: samsung
+    type: org
+    aliases: ["Samsung", "Samsung Electronics", "삼성", "삼성전자",
+              "サムスン", "三星"]
+  - canonical_id: tsmc
+    type: org
+    aliases: ["TSMC", "Taiwan Semiconductor", "TSMC", "台積電", "台积电"]
+  - canonical_id: sk_hynix
+    type: org
+    aliases: ["SK Hynix", "SK하이닉스", "하이닉스"]
+
+  # -------- Ongoing events / conflicts --------
+  - canonical_id: ukraine_war
+    type: event
+    aliases: ["Ukraine war", "Russia-Ukraine war", "우크라이나 전쟁",
+              "러우 전쟁", "ウクライナ戦争", "俄乌战争"]
+  - canonical_id: israel_gaza_war
+    type: event
+    aliases: ["Israel-Gaza war", "Gaza war", "Israel-Hamas war",
+              "가자 전쟁", "이스라엘-하마스 전쟁", "ガザ戦争"]
+  - canonical_id: strait_of_hormuz
+    type: region
+    aliases: ["Strait of Hormuz", "호르무즈 해협", "ホルムズ海峡",
+              "霍尔木兹海峡", "Hormuz"]
+  - canonical_id: taiwan_strait
+    type: region
+    aliases: ["Taiwan Strait", "대만 해협", "台湾海峡", "台灣海峽"]
+  - canonical_id: south_china_sea
+    type: region
+    aliases: ["South China Sea", "남중국해", "南シナ海", "南海",
+              "南中国海"]

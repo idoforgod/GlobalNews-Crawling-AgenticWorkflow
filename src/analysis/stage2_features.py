@@ -523,6 +523,16 @@ def _ner_schema():
         pa.field("entities_person", pa.list_(pa.utf8()), nullable=False),
         pa.field("entities_org", pa.list_(pa.utf8()), nullable=False),
         pa.field("entities_location", pa.list_(pa.utf8()), nullable=False),
+        # Geo Focus (추가 — articles_enriched 핵심 필드)
+        pa.field("geo_focus_primary", pa.utf8(), nullable=False),
+        pa.field("geo_focus_all", pa.list_(pa.utf8()), nullable=False),
+        pa.field("geo_confidence", pa.float32(), nullable=False),
+        pa.field("geo_method", pa.utf8(), nullable=False),
+        # Signal (추가 — 18-Question Engine 직접 소비)
+        pa.field("signal_type", pa.utf8(), nullable=False),
+        pa.field("noise_score", pa.float32(), nullable=False),
+        pa.field("novelty_score", pa.float32(), nullable=False),
+        pa.field("burst_score", pa.float32(), nullable=False),
     ])
 
 
@@ -1317,6 +1327,74 @@ class Stage2FeatureExtractor:
         _check_memory(self.config.max_memory_gb, "after NER")
 
         # ------------------------------------------------------------------
+        # 4b. Geo Focus Extraction (NER location 재사용 — 모델 재실행 없음)
+        # ------------------------------------------------------------------
+        t0 = time.monotonic()
+        try:
+            from src.analysis.geo_focus_extractor import GeoFocusExtractor
+            _geo_extractor = GeoFocusExtractor()
+            geo_results: dict[str, dict] = {}
+            for aid, title, body, lang in zip(
+                article_ids, titles, bodies, languages,
+            ):
+                ner_locs = ner_results.get(aid, {}).get("location", [])
+                r = _geo_extractor.extract(
+                    title=title, body=body, language=lang,
+                    ner_locations=ner_locs,
+                )
+                geo_results[aid] = r.to_dict()
+        except Exception as exc:
+            logger.warning("geo_focus_extraction_failed error=%s", exc)
+            geo_results = {
+                aid: {
+                    "geo_focus_primary": "UNKNOWN",
+                    "geo_focus_all": [],
+                    "geo_confidence": 0.0,
+                    "geo_method": "fallback",
+                }
+                for aid in article_ids
+            }
+        logger.info(
+            "geo_focus_complete elapsed=%.1fs",
+            time.monotonic() - t0,
+        )
+
+        # ------------------------------------------------------------------
+        # 4c. Signal Layer A — 기사 단독 (noise_score, novelty_score, prelim type)
+        # ------------------------------------------------------------------
+        t0 = time.monotonic()
+        try:
+            from src.analysis.signal_classifier import SignalClassifier
+            _sig_clf = SignalClassifier()
+            signal_results: dict[str, dict] = {}
+            for aid, title, body, lang in zip(
+                article_ids, titles, bodies, languages,
+            ):
+                geo_d = geo_results.get(aid, {})
+                sig_r = _sig_clf.classify(
+                    title=title,
+                    body=body,
+                    language=lang,
+                    geo_focus_all=geo_d.get("geo_focus_all", []),
+                )
+                signal_results[aid] = sig_r.to_dict()
+        except Exception as exc:
+            logger.warning("signal_layer_a_failed error=%s", exc)
+            signal_results = {
+                aid: {
+                    "signal_type": "UNCLASSIFIED",
+                    "noise_score": 0.0,
+                    "novelty_score": 0.0,
+                    "burst_score": 1.0,
+                }
+                for aid in article_ids
+            }
+        logger.info(
+            "signal_layer_a_complete elapsed=%.1fs",
+            time.monotonic() - t0,
+        )
+
+        # ------------------------------------------------------------------
         # 5. KeyBERT Keywords
         # ------------------------------------------------------------------
         t0 = time.monotonic()
@@ -1341,7 +1419,9 @@ class Stage2FeatureExtractor:
             output_dir, article_ids, sbert_results, keyword_results,
         )
         self._write_tfidf_parquet(output_dir, article_ids, tfidf_results)
-        self._write_ner_parquet(output_dir, article_ids, ner_results)
+        self._write_ner_parquet(
+            output_dir, article_ids, ner_results, geo_results, signal_results,
+        )
 
         # ------------------------------------------------------------------
         # 7. Cleanup: unload NER and KeyBERT (SBERT stays for Stage 4)
@@ -1506,23 +1586,55 @@ class Stage2FeatureExtractor:
         output_dir: Path,
         article_ids: list[str],
         ner_results: dict[str, dict[str, list[str]]],
+        geo_results: dict[str, dict] | None = None,
+        signal_results: dict[str, dict] | None = None,
     ) -> None:
-        """Write ner.parquet with entity lists per type."""
+        """Write ner.parquet with entity lists + geo_focus + signal per article."""
         pa, pq = _ensure_pyarrow()
         schema = _ner_schema()
+        _geo = geo_results or {}
+        _sig = signal_results or {}
 
         rows = {
             "article_id": [],
             "entities_person": [],
             "entities_org": [],
             "entities_location": [],
+            "geo_focus_primary": [],
+            "geo_focus_all": [],
+            "geo_confidence": [],
+            "geo_method": [],
+            "signal_type": [],
+            "noise_score": [],
+            "novelty_score": [],
+            "burst_score": [],
         }
         for aid in article_ids:
             data = ner_results.get(aid, {"person": [], "org": [], "location": []})
+            geo = _geo.get(aid, {
+                "geo_focus_primary": "UNKNOWN",
+                "geo_focus_all": [],
+                "geo_confidence": 0.0,
+                "geo_method": "fallback",
+            })
+            sig = _sig.get(aid, {
+                "signal_type": "UNCLASSIFIED",
+                "noise_score": 0.0,
+                "novelty_score": 0.0,
+                "burst_score": 1.0,
+            })
             rows["article_id"].append(aid)
             rows["entities_person"].append(data.get("person", []))
             rows["entities_org"].append(data.get("org", []))
             rows["entities_location"].append(data.get("location", []))
+            rows["geo_focus_primary"].append(geo.get("geo_focus_primary", "UNKNOWN"))
+            rows["geo_focus_all"].append(geo.get("geo_focus_all", []))
+            rows["geo_confidence"].append(float(geo.get("geo_confidence", 0.0)))
+            rows["geo_method"].append(geo.get("geo_method", "fallback"))
+            rows["signal_type"].append(sig.get("signal_type", "UNCLASSIFIED"))
+            rows["noise_score"].append(float(sig.get("noise_score", 0.0)))
+            rows["novelty_score"].append(float(sig.get("novelty_score", 0.0)))
+            rows["burst_score"].append(float(sig.get("burst_score", 1.0)))
 
         table = pa.table(rows, schema=schema)
         out_path = output_dir / "ner.parquet"

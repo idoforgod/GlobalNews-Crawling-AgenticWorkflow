@@ -1,0 +1,783 @@
+version: '1.0'
+signals:
+  포스코_7000명_하청_근로자_본사_직고용_결정:
+    title: 포스코, 7000명 하청 근로자 본사 직고용 결정
+    slug: 포스코_7000명_하청_근로자_본사_직고용_결정
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-07'
+    last_seen: '2026-04-07'
+    seen_dates:
+    - '2026-04-07'
+    added_date: '2026-04-25'
+  은퇴_12년_김연아_발레리나로_깜짝_변신제미나이로_죽음의_무도_재탄생:
+    title: 은퇴 12년 김연아, 발레리나로 깜짝 변신…제미나이로 ‘죽음의 무도’ 재탄생
+    slug: 은퇴_12년_김연아_발레리나로_깜짝_변신제미나이로_죽음의_무도_재탄생
+    steeps: TEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-07'
+    last_seen: '2026-04-07'
+    seen_dates:
+    - '2026-04-07'
+    added_date: '2026-04-25'
+  밴스_이란_농축_포기해야_제재_완화레바논은_휴전_제외:
+    title: 밴스 “이란, 농축 포기해야 제재 완화…레바논은 휴전 제외”
+    slug: 밴스_이란_농축_포기해야_제재_완화레바논은_휴전_제외
+    steeps: POL
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-09'
+    last_seen: '2026-04-09'
+    seen_dates:
+    - '2026-04-09'
+    added_date: '2026-04-25'
+  이란_2주간_호르무즈_통과_유조선에_암호화폐로_통행료_징수:
+    title: 이란 “2주간 호르무즈 통과 유조선에 암호화폐로 통행료 징수”
+    slug: 이란_2주간_호르무즈_통과_유조선에_암호화폐로_통행료_징수
+    steeps: SEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-09'
+    last_seen: '2026-04-09'
+    seen_dates:
+    - '2026-04-09'
+    added_date: '2026-04-25'
+  서울_아파트_전셋값_오르자_오피스텔_전셋값도_껑충:
+    title: 서울 아파트 전셋값 오르자, 오피스텔 전셋값도 ‘껑충’
+    slug: 서울_아파트_전셋값_오르자_오피스텔_전셋값도_껑충
+    steeps: ECO
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-22'
+    last_seen: '2026-04-22'
+    seen_dates:
+    - '2026-04-22'
+    added_date: '2026-04-25'
+  출근길_황사_덮친_하늘_전국_미세먼지_나쁨제주남부_비:
+    title: 출근길 황사 덮친 하늘, 전국 미세먼지 ‘나쁨’…제주·남부 비
+    slug: 출근길_황사_덮친_하늘_전국_미세먼지_나쁨제주남부_비
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-22'
+    last_seen: '2026-04-22'
+    seen_dates:
+    - '2026-04-22'
+    added_date: '2026-04-25'
+  北_srbm에_집속탄_장착_시험발사표적지역_초강력_밀도로_초토화:
+    title: 北 “SRBM에 ‘집속탄’ 장착 시험발사…표적지역 초강력 밀도로 초토화”
+    slug: 北_srbm에_집속탄_장착_시험발사표적지역_초강력_밀도로_초토화
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-09'
+    last_seen: '2026-04-09'
+    seen_dates:
+    - '2026-04-09'
+    added_date: '2026-04-25'
+  g마켓ssg닷컴_멤버십_파트너십_체결_동시_가입하면_2000원_돌려준다:
+    title: G마켓·SSG닷컴 멤버십 파트너십 체결… 동시 가입하면 2000원 돌려준다
+    slug: g마켓ssg닷컴_멤버십_파트너십_체결_동시_가입하면_2000원_돌려준다
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-12'
+    last_seen: '2026-04-12'
+    seen_dates:
+    - '2026-04-12'
+    added_date: '2026-04-25'
+  美검찰_연준_파월_수사_종결후임인_워시_인준_가시권:
+    title: 美검찰, 연준 파월 수사 종결…후임인 워시 인준 가시권
+    slug: 美검찰_연준_파월_수사_종결후임인_워시_인준_가시권
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-25'
+    last_seen: '2026-04-25'
+    seen_dates:
+    - '2026-04-25'
+    added_date: '2026-04-25'
+  ai변압기_효성重_1년새_주가_8배로_메타는_내달_8000명_해고:
+    title: ‘AI변압기’ 효성重 1년새 주가 8배로… 메타는 “내달 8000명 해고”
+    slug: ai변압기_효성重_1년새_주가_8배로_메타는_내달_8000명_해고
+    steeps: ECO
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-25'
+    last_seen: '2026-04-25'
+    seen_dates:
+    - '2026-04-25'
+    added_date: '2026-04-25'
+  장동혁_美차관보_아닌_차관_비서실장_만났다:
+    title: 장동혁, 美차관보 아닌 ‘차관 비서실장’ 만났다
+    slug: 장동혁_美차관보_아닌_차관_비서실장_만났다
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-24'
+    last_seen: '2026-04-24'
+    seen_dates:
+    - '2026-04-24'
+    added_date: '2026-04-25'
+  평균_616점_황희찬_꼴찌_팀에서도_꼴찌라니강등_100_속_불명예_울버햄튼_자체가_시즌_내내_최악:
+    title: '''평균 6.16점'' 황희찬, 꼴찌 팀에서도 꼴찌라니...''강등 100%'' 속 불명예 "울버햄튼 자체가 시즌 내내 최악"'
+    slug: 평균_616점_황희찬_꼴찌_팀에서도_꼴찌라니강등_100_속_불명예_울버햄튼_자체가_시즌_내내_최악
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-04-18'
+    last_seen: '2026-04-18'
+    seen_dates:
+    - '2026-04-18'
+    added_date: '2026-04-25'
+  한국_여자_아이스하키_라트비아에_76_대역전승세계선수권_첫_승:
+    title: 한국 여자 아이스하키, 라트비아에 7-6 대역전승…세계선수권 첫 승
+    slug: 한국_여자_아이스하키_라트비아에_76_대역전승세계선수권_첫_승
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-14'
+    last_seen: '2026-04-14'
+    seen_dates:
+    - '2026-04-14'
+    added_date: '2026-04-25'
+  한투證_한화에어로스페이스_기대_이하_실적_예상에도_매력도_여전목표가_200만원:
+    title: 한투證 “한화에어로스페이스, 기대 이하 실적 예상에도 매력도 여전…목표가 200만원”
+    slug: 한투證_한화에어로스페이스_기대_이하_실적_예상에도_매력도_여전목표가_200만원
+    steeps: ECO
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-04-15'
+    last_seen: '2026-04-15'
+    seen_dates:
+    - '2026-04-15'
+    added_date: '2026-04-25'
+  키_높이_깔창과_맞바꾼_발_건강이것_위험도_높아져:
+    title: 키 높이 깔창과 맞바꾼 발 건강…‘이것’ 위험도 높아져
+    slug: 키_높이_깔창과_맞바꾼_발_건강이것_위험도_높아져
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-15'
+    last_seen: '2026-04-15'
+    seen_dates:
+    - '2026-04-15'
+    added_date: '2026-04-25'
+  빚내서라도_먹어야_최화정이_강추한_제철_음식은:
+    title: “빚내서라도 먹어야” 최화정이 강추한 ‘제철 음식’은
+    slug: 빚내서라도_먹어야_최화정이_강추한_제철_음식은
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-12'
+    last_seen: '2026-04-12'
+    seen_dates:
+    - '2026-04-12'
+    added_date: '2026-04-25'
+  레바논서_예수상_망치로_내려친_이스라엘_병사軍_엄중_조치:
+    title: 레바논서 예수상 망치로 내려친 이스라엘 병사…軍 “엄중 조치”
+    slug: 레바논서_예수상_망치로_내려친_이스라엘_병사軍_엄중_조치
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-20'
+    last_seen: '2026-04-20'
+    seen_dates:
+    - '2026-04-20'
+    added_date: '2026-04-25'
+  트럼프는_히틀러냐_폭발미국_전역유럽_3200곳_노_킹스_시위:
+    title: ‘트럼프는 히틀러냐’ 폭발…미국 전역·유럽 3200곳 ‘노 킹스’ 시위
+    slug: 트럼프는_히틀러냐_폭발미국_전역유럽_3200곳_노_킹스_시위
+    steeps: SEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: hani
+    status: watching
+    first_detected: '2026-03-29'
+    last_seen: '2026-03-29'
+    seen_dates:
+    - '2026-03-29'
+    added_date: '2026-04-25'
+  호르무즈_통행_일부_재개美_이란_관련_없는_선박만_통과시키는듯:
+    title: 호르무즈 통행 일부 재개…美, 이란 관련 없는 선박만 통과시키는듯
+    slug: 호르무즈_통행_일부_재개美_이란_관련_없는_선박만_통과시키는듯
+    steeps: SEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-15'
+    last_seen: '2026-04-15'
+    seen_dates:
+    - '2026-04-15'
+    added_date: '2026-04-25'
+  부자들은_알뜰한_소비_건강_관리엔_돈_안_아꼈다:
+    title: 부자들은 알뜰한 소비... 건강 관리엔 돈 안 아꼈다
+    slug: 부자들은_알뜰한_소비_건강_관리엔_돈_안_아꼈다
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-04-25'
+    last_seen: '2026-04-25'
+    seen_dates:
+    - '2026-04-25'
+    added_date: '2026-04-25'
+  에바_21년_만_한국_국적_취득선서하고_애국가_불러:
+    title: 에바, 21년 만 한국 국적 취득…“선서하고 애국가 불러”
+    slug: 에바_21년_만_한국_국적_취득선서하고_애국가_불러
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-12'
+    last_seen: '2026-04-12'
+    seen_dates:
+    - '2026-04-12'
+    added_date: '2026-04-25'
+  저_기억하시나요사진_찍어준_경찰관_잊지_못한_아이의_선물:
+    title: “저 기억하시나요?”…사진 찍어준 경찰관 잊지 못한 아이의 선물
+    slug: 저_기억하시나요사진_찍어준_경찰관_잊지_못한_아이의_선물
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-20'
+    last_seen: '2026-04-20'
+    seen_dates:
+    - '2026-04-20'
+    added_date: '2026-04-25'
+  사우나_30분_몸은_운동_상태백혈구심박수_동시에_변화바디플랜:
+    title: 사우나 30분, 몸은 ‘운동’ 상태…백혈구·심박수 동시에 변화[바디플랜]
+    slug: 사우나_30분_몸은_운동_상태백혈구심박수_동시에_변화바디플랜
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-12'
+    last_seen: '2026-04-12'
+    seen_dates:
+    - '2026-04-12'
+    added_date: '2026-04-25'
+  전북_흐리고_오전에_곳에_따라_비낮_최고_1418도_연합뉴스:
+    title: 전북 흐리고 오전에 곳에 따라 비…낮 최고 14∼18도 | 연합뉴스
+    slug: 전북_흐리고_오전에_곳에_따라_비낮_최고_1418도_연합뉴스
+    steeps: TEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: yna
+    status: watching
+    first_detected: '2026-04-22'
+    last_seen: '2026-04-22'
+    seen_dates:
+    - '2026-04-22'
+    added_date: '2026-04-25'
+  美이란_봉쇄_이후_선박_33척_회항제3항모도_중동_근접:
+    title: 美“이란 봉쇄 이후 선박 33척 회항”…제3항모도 중동 근접
+    slug: 美이란_봉쇄_이후_선박_33척_회항제3항모도_중동_근접
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-24'
+    last_seen: '2026-04-24'
+    seen_dates:
+    - '2026-04-24'
+    added_date: '2026-04-25'
+  안젤리나_졸리_딸_k팝_뮤직비디오에_등장:
+    title: 안젤리나 졸리 딸, K팝 뮤직비디오에 등장
+    slug: 안젤리나_졸리_딸_k팝_뮤직비디오에_등장
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-05'
+    last_seen: '2026-04-05'
+    seen_dates:
+    - '2026-04-05'
+    added_date: '2026-04-25'
+  최민수_강주은_우리_추억_그_어떤_재산보다_귀해:
+    title: ‘최민수♥’ 강주은 “우리 추억, 그 어떤 재산보다 귀해”
+    slug: 최민수_강주은_우리_추억_그_어떤_재산보다_귀해
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-12'
+    last_seen: '2026-04-12'
+    seen_dates:
+    - '2026-04-12'
+    added_date: '2026-04-25'
+  태안서_해루질하던_70대_남성_실종8시간째_수색:
+    title: 태안서 해루질하던 70대 남성 실종…8시간째 수색
+    slug: 태안서_해루질하던_70대_남성_실종8시간째_수색
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-20'
+    last_seen: '2026-04-20'
+    seen_dates:
+    - '2026-04-20'
+    added_date: '2026-04-25'
+  4만명_집결_삼성전자_노조_5월_총파업_수순글로벌_재앙_우려:
+    title: ‘4만명 집결’ 삼성전자 노조, 5월 총파업 수순…‘글로벌 재앙’ 우려
+    slug: 4만명_집결_삼성전자_노조_5월_총파업_수순글로벌_재앙_우려
+    steeps: TEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-24'
+    last_seen: '2026-04-24'
+    seen_dates:
+    - '2026-04-24'
+    added_date: '2026-04-25'
+  北_日다카이치_야스쿠니공물에_역사왜곡이자_정의평화_도전_연합뉴스:
+    title: 北, 日다카이치 야스쿠니공물에 "역사왜곡이자 정의·평화 도전" | 연합뉴스
+    slug: 北_日다카이치_야스쿠니공물에_역사왜곡이자_정의평화_도전_연합뉴스
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: yna
+    status: watching
+    first_detected: '2026-04-25'
+    last_seen: '2026-04-25'
+    seen_dates:
+    - '2026-04-25'
+    added_date: '2026-04-25'
+  아르테미스_ⅱ_달_표면_유성체_충돌_섬광_첫_육안_관측:
+    title: 아르테미스 Ⅱ, 달 표면 유성체 충돌 섬광 첫 육안 관측
+    slug: 아르테미스_ⅱ_달_표면_유성체_충돌_섬광_첫_육안_관측
+    steeps: TEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-18'
+    last_seen: '2026-04-18'
+    seen_dates:
+    - '2026-04-18'
+    added_date: '2026-04-25'
+  ssg_상대_10k_잡은_코리안_몬스터_류현진_선동열송진우_넘어_최소경기최고령_1500탈삼진:
+    title: SSG 상대 10K 잡은 ‘코리안 몬스터’ 류현진, 선동열-송진우 넘어 최소경기-최고령 1500탈삼진
+    slug: ssg_상대_10k_잡은_코리안_몬스터_류현진_선동열송진우_넘어_최소경기최고령_1500탈삼진
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-07'
+    last_seen: '2026-04-07'
+    seen_dates:
+    - '2026-04-07'
+    added_date: '2026-04-25'
+  올_1분기_산재_사망자_113명_역대_최저건설제조_엇갈려:
+    title: 올 1분기 산재 사망자 113명 ‘역대 최저’…건설↓·제조↑ 엇갈려
+    slug: 올_1분기_산재_사망자_113명_역대_최저건설제조_엇갈려
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-14'
+    last_seen: '2026-04-14'
+    seen_dates:
+    - '2026-04-14'
+    added_date: '2026-04-25'
+  3월_생산자물가_16_급등4년여_만에_최고_상승률:
+    title: 3월 생산자물가 1.6% 급등…4년여 만에 최고 상승률
+    slug: 3월_생산자물가_16_급등4년여_만에_최고_상승률
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-22'
+    last_seen: '2026-04-22'
+    seen_dates:
+    - '2026-04-22'
+    added_date: '2026-04-25'
+  정호영정지선_모수_홍콩_진출저녁_식사_1인분_가격_40만_원_사당귀:
+    title: 정호영·정지선, 모수 홍콩 진출…"저녁 식사 1인분 가격 40만 원" ('사당귀')
+    slug: 정호영정지선_모수_홍콩_진출저녁_식사_1인분_가격_40만_원_사당귀
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-04-05'
+    last_seen: '2026-04-05'
+    seen_dates:
+    - '2026-04-05'
+    added_date: '2026-04-25'
+  남편이_장보면_더_비싼_것_같아요_진짜였다가계_지출_5:
+    title: “남편이 장보면 더 비싼 것 같아요” 진짜였다…가계 지출 5%↑
+    slug: 남편이_장보면_더_비싼_것_같아요_진짜였다가계_지출_5
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-14'
+    last_seen: '2026-04-14'
+    seen_dates:
+    - '2026-04-14'
+    added_date: '2026-04-25'
+  41세_장도연_사유리_이어_자발적_비혼모_될까_엄마가_도와준다고_구기동프렌즈:
+    title: '''41세'' 장도연, 사유리 이어 자발적 비혼모 될까 "엄마가 도와준다고" (''구기동프렌즈'')'
+    slug: 41세_장도연_사유리_이어_자발적_비혼모_될까_엄마가_도와준다고_구기동프렌즈
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-04-25'
+    last_seen: '2026-04-25'
+    seen_dates:
+    - '2026-04-25'
+    added_date: '2026-04-25'
+  3월_취업자_20만6000명두_달_연속_20만명대_증가폭:
+    title: 3월 취업자 20만6000명↑…두 달 연속 20만명대 증가폭
+    slug: 3월_취업자_20만6000명두_달_연속_20만명대_증가폭
+    steeps: ECO
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-15'
+    last_seen: '2026-04-15'
+    seen_dates:
+    - '2026-04-15'
+    added_date: '2026-04-25'
+  구윤철_유가_120130달러_가면_민간도_차량_5부제_의무화_검토:
+    title: 구윤철 “유가 120~130달러 가면 민간도 차량 5부제 의무화 검토”
+    slug: 구윤철_유가_120130달러_가면_민간도_차량_5부제_의무화_검토
+    steeps: ECO
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-03-29'
+    last_seen: '2026-03-29'
+    seen_dates:
+    - '2026-03-29'
+    added_date: '2026-04-25'
+  요즘_서점가_젊은작가상_수상작품집_소설_베스트셀러_2위:
+    title: '[요즘 서점가] ‘젊은작가상 수상작품집’ 소설 베스트셀러 2위'
+    slug: 요즘_서점가_젊은작가상_수상작품집_소설_베스트셀러_2위
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-04-18'
+    last_seen: '2026-04-18'
+    seen_dates:
+    - '2026-04-18'
+    added_date: '2026-04-25'
+  성과급_수억_우린_쉴_곳도_없어허탈한_반도체_하청_노동자:
+    title: “성과급 수억? 우린 쉴 곳도 없어”…허탈한 반도체 하청 노동자
+    slug: 성과급_수억_우린_쉴_곳도_없어허탈한_반도체_하청_노동자
+    steeps: TEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: hani
+    status: watching
+    first_detected: '2026-04-24'
+    last_seen: '2026-04-24'
+    seen_dates:
+    - '2026-04-24'
+    added_date: '2026-04-25'
+  파키스탄이_필사적으로_협상_중재_나선_이유_너무_가난한데_전쟁_휘말릴까봐:
+    title: 파키스탄이 필사적으로 협상 중재 나선 이유… 너무 가난한데 전쟁 휘말릴까봐
+    slug: 파키스탄이_필사적으로_협상_중재_나선_이유_너무_가난한데_전쟁_휘말릴까봐
+    steeps: SEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-18'
+    last_seen: '2026-04-18'
+    seen_dates:
+    - '2026-04-18'
+    added_date: '2026-04-25'
+  완주군_주택건물_485곳에_신재생에너지_설치_지원_연합뉴스:
+    title: 완주군, 주택·건물 485곳에 신재생에너지 설치 지원 | 연합뉴스
+    slug: 완주군_주택건물_485곳에_신재생에너지_설치_지원_연합뉴스
+    steeps: ENV
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: yna
+    status: watching
+    first_detected: '2026-04-14'
+    last_seen: '2026-04-14'
+    seen_dates:
+    - '2026-04-14'
+    added_date: '2026-04-25'
+  뭐_샀길래_석달_수익률_32국민연금_보유_주식_가치_1분기만_80조원_늘어:
+    title: “뭐 샀길래 석달 수익률 32%?”...국민연금 보유 주식 가치 1분기만 80조원 늘어
+    slug: 뭐_샀길래_석달_수익률_32국민연금_보유_주식_가치_1분기만_80조원_늘어
+    steeps: ECO
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-04-09'
+    last_seen: '2026-04-09'
+    seen_dates:
+    - '2026-04-09'
+    added_date: '2026-04-25'
+  선우용여_800만원_매입100억_된_99평_청담동_옛_집터_방문_안_부러워:
+    title: 선우용여, 800만원 매입→100억 된 99평 청담동 옛 집터 방문 “안 부러워”
+    slug: 선우용여_800만원_매입100억_된_99평_청담동_옛_집터_방문_안_부러워
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-09'
+    last_seen: '2026-04-09'
+    seen_dates:
+    - '2026-04-09'
+    added_date: '2026-04-25'
+  용인_경남아너스빌_공사현장서_감전_추정_사고60대_근로자_사망:
+    title: 용인 경남아너스빌 공사현장서 감전 추정 사고…60대 근로자 사망
+    slug: 용인_경남아너스빌_공사현장서_감전_추정_사고60대_근로자_사망
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-18'
+    last_seen: '2026-04-18'
+    seen_dates:
+    - '2026-04-18'
+    added_date: '2026-04-25'
+  현대백화점의_승부수_글로벌_게임사_손잡고_젠지_세대_공략_나선다:
+    title: 현대백화점의 승부수… 글로벌 게임사 손잡고 ‘젠지 세대’ 공략 나선다
+    slug: 현대백화점의_승부수_글로벌_게임사_손잡고_젠지_세대_공략_나선다
+    steeps: TEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-14'
+    last_seen: '2026-04-14'
+    seen_dates:
+    - '2026-04-14'
+    added_date: '2026-04-25'
+  더_정교해진_이미지_생성_ai_광고교재도_척척:
+    title: 더 정교해진 이미지 생성 AI… 광고·교재도 척척
+    slug: 더_정교해진_이미지_생성_ai_광고교재도_척척
+    steeps: TEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-04-22'
+    last_seen: '2026-04-22'
+    seen_dates:
+    - '2026-04-22'
+    added_date: '2026-04-25'
+  더보이즈_9人이_낸_전속계약효력정지_가처분_신청_인용_연합뉴스:
+    title: 더보이즈 9人이 낸 전속계약효력정지 가처분 신청 인용 | 연합뉴스
+    slug: 더보이즈_9人이_낸_전속계약효력정지_가처분_신청_인용_연합뉴스
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: yna
+    status: watching
+    first_detected: '2026-04-24'
+    last_seen: '2026-04-24'
+    seen_dates:
+    - '2026-04-24'
+    added_date: '2026-04-25'
+  평소_요금의_7배를_받겠다고美_월드컵_대중교통비_인상_논란:
+    title: “평소 요금의 7배를 받겠다고?”…美, 월드컵 대중교통비 인상 논란
+    slug: 평소_요금의_7배를_받겠다고美_월드컵_대중교통비_인상_논란
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-15'
+    last_seen: '2026-04-15'
+    seen_dates:
+    - '2026-04-15'
+    added_date: '2026-04-25'
+  트럼프_48시간_내_이란에_지옥_쏟아질_것또_최후통첩:
+    title: 트럼프 “48시간 내 이란에 지옥 쏟아질 것”…또 최후통첩
+    slug: 트럼프_48시간_내_이란에_지옥_쏟아질_것또_최후통첩
+    steeps: SEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: hani
+    status: watching
+    first_detected: '2026-04-05'
+    last_seen: '2026-04-05'
+    seen_dates:
+    - '2026-04-05'
+    added_date: '2026-04-25'
+  30살_된_포켓몬5월_서울서_포켓몬_메가페스타_개최_연합뉴스:
+    title: 30살 된 포켓몬…5월 서울서 '포켓몬 메가페스타' 개최 | 연합뉴스
+    slug: 30살_된_포켓몬5월_서울서_포켓몬_메가페스타_개최_연합뉴스
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: yna
+    status: watching
+    first_detected: '2026-04-20'
+    last_seen: '2026-04-20'
+    seen_dates:
+    - '2026-04-20'
+    added_date: '2026-04-25'
+  울주옹기종기도서관_독서활동가_양성책_읽어dream팀_운영_연합뉴스:
+    title: 울주옹기종기도서관, 독서활동가 양성…'책 읽어Dream팀' 운영 | 연합뉴스
+    slug: 울주옹기종기도서관_독서활동가_양성책_읽어dream팀_운영_연합뉴스
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: yna
+    status: watching
+    first_detected: '2026-03-29'
+    last_seen: '2026-03-29'
+    seen_dates:
+    - '2026-03-29'
+    added_date: '2026-04-25'
+  트럼프_오늘_밤_하나의_문명_사라질_것완전한_정권_교체:
+    title: 트럼프 “오늘 밤 ‘하나의 문명’ 사라질 것…완전한 정권 교체”
+    slug: 트럼프_오늘_밤_하나의_문명_사라질_것완전한_정권_교체
+    steeps: SEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-07'
+    last_seen: '2026-04-07'
+    seen_dates:
+    - '2026-04-07'
+    added_date: '2026-04-25'
+  윤이나_lpga_투어_아람코_챔피언십_3r_공동_9위_연합뉴스:
+    title: 윤이나, LPGA 투어 아람코 챔피언십 3R 공동 9위 | 연합뉴스
+    slug: 윤이나_lpga_투어_아람코_챔피언십_3r_공동_9위_연합뉴스
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: yna
+    status: watching
+    first_detected: '2026-04-05'
+    last_seen: '2026-04-05'
+    seen_dates:
+    - '2026-04-05'
+    added_date: '2026-04-25'
+  김부겸_전_총리_30일_대구시장_출마_공식_선언:
+    title: 김부겸 전 총리, 30일 대구시장 출마 공식 선언
+    slug: 김부겸_전_총리_30일_대구시장_출마_공식_선언
+    steeps: POL
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-03-29'
+    last_seen: '2026-03-29'
+    seen_dates:
+    - '2026-03-29'
+    added_date: '2026-04-25'
+  간헐적_단식했는데_왜_안_빠질까변수는_이것_바디플랜:
+    title: “간헐적 단식했는데 왜 안 빠질까”…변수는 ‘이것’ [바디플랜]
+    slug: 간헐적_단식했는데_왜_안_빠질까변수는_이것_바디플랜
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-05'
+    last_seen: '2026-04-05'
+    seen_dates:
+    - '2026-04-05'
+    added_date: '2026-04-25'
+  관세_부담_덜어낸_셀트리온_국산_시밀러_최초_美_처방_1위까지_실적_성장_본궤도:
+    title: 관세 부담 덜어낸 셀트리온, 국산 시밀러 최초 美 처방 1위까지… 실적 성장 본궤도
+    slug: 관세_부담_덜어낸_셀트리온_국산_시밀러_최초_美_처방_1위까지_실적_성장_본궤도
+    steeps: ECO
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-04-07'
+    last_seen: '2026-04-07'
+    seen_dates:
+    - '2026-04-07'
+    added_date: '2026-04-25'
+  사설_메모리_반도체_호황에_취했다가_대만_하청_국가_된다:
+    title: '[사설] “메모리 반도체 호황에 취했다가 대만 하청 국가 된다”'
+    slug: 사설_메모리_반도체_호황에_취했다가_대만_하청_국가_된다
+    steeps: TEC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: chosun
+    status: watching
+    first_detected: '2026-04-20'
+    last_seen: '2026-04-20'
+    seen_dates:
+    - '2026-04-20'
+    added_date: '2026-04-25'
+  윤택_29일_부친상_투병_중_별세슬픔_속_빈소_지켜:
+    title: 윤택, 29일 부친상 “투병 중 별세…슬픔 속 빈소 지켜”
+    slug: 윤택_29일_부친상_투병_중_별세슬픔_속_빈소_지켜
+    steeps: SOC
+    geo_focus: UNKNOWN
+    novelty_score: 0.0
+    source_id: donga
+    status: watching
+    first_detected: '2026-03-29'
+    last_seen: '2026-03-29'
+    seen_dates:
+    - '2026-03-29'
+    added_date: '2026-04-25'
+last_updated: '2026-04-25'

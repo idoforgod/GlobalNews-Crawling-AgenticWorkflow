@@ -490,6 +490,12 @@ class AnalysisPipeline:
         # Collect final output paths
         result.final_output_paths = self._collect_final_outputs()
 
+        # Post-processing: Enriched Assembly + 18-Question Engine
+        # 영구 파이프라인 통합: Stage 8 완료 후 자동 실행
+        # Stage 8 성공 시에만 실행 (실패해도 analysis 결과는 보존)
+        if result.success and 8 in result.stages_completed:
+            self._run_post_processing()
+
         logger.info(
             "analysis_pipeline_complete success=%s completed=%s failed=%s "
             "skipped=%s total_elapsed=%.1fs peak_memory=%.2f_GB",
@@ -1243,6 +1249,83 @@ class AnalysisPipeline:
     # -----------------------------------------------------------------
     # Final Output Collection
     # -----------------------------------------------------------------
+
+    def _run_post_processing(self) -> None:
+        """Stage 8 완료 후 영구 후처리: Enriched Assembly + 18-Question Engine.
+
+        - articles_enriched.parquet 조립 (NER + geo + signal + source meta 통합)
+        - 18개 분석 질문에 매일 강제 응답 (data/answers/{date}/*.json)
+
+        실패해도 파이프라인 전체 success에 영향 없음 (WARNING만).
+        """
+        date_str = self._date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        project_root = str(DATA_DIR.parent)
+
+        # Step 1: Enriched Assembly
+        try:
+            from src.analysis.articles_enriched_assembler import ArticlesEnrichedAssembler
+            assembler = ArticlesEnrichedAssembler(
+                date=date_str, project_root=project_root,
+            )
+            r = assembler.run()
+            logger.info(
+                "enriched_assembly_done count=%d elapsed=%.1fs",
+                r.get("article_count", 0), r.get("elapsed", 0),
+            )
+        except Exception as exc:
+            logger.warning("enriched_assembly_failed error=%s", exc)
+
+        # Step 2: 18-Question Engine
+        try:
+            from src.analysis.question_engine import run_question_engine
+            qr = run_question_engine(date=date_str, project_root=project_root)
+            v = qr.get("validation", {})
+            logger.info(
+                "question_engine_done answered=%d degraded=%d insufficient=%d",
+                v.get("answered", 0), v.get("degraded", 0),
+                v.get("insufficient_data", 0),
+            )
+        except Exception as exc:
+            logger.warning("question_engine_failed error=%s", exc)
+
+        # Step 3: Future Signal Portfolio 갱신
+        try:
+            from src.analysis.signal_portfolio import update_portfolio
+            from pathlib import Path as _Path
+            _port_path = _Path(project_root) / "data" / "signal_portfolio.yaml"
+            _ans_dir = _Path(project_root) / "data" / "answers"
+            stats = update_portfolio(_port_path, _ans_dir, lookback_days=30)
+            logger.info(
+                "signal_portfolio_updated added=%d promoted=%d dismissed=%d total=%d",
+                stats["added"], stats["promoted"], stats["dismissed"], stats["total"],
+            )
+        except Exception as exc:
+            logger.warning("signal_portfolio_failed error=%s", exc)
+
+        # Step 4: Geopolitical Tension Index (GTI)
+        try:
+            from src.analysis.gti import run_gti
+            gti_r = run_gti(date_str, project_root)
+            logger.info(
+                "gti_done date=%s score=%.1f label=%s",
+                date_str, gti_r["gti_score"], gti_r["gti_label"],
+            )
+        except Exception as exc:
+            logger.warning("gti_failed error=%s", exc)
+
+        # Step 5: 주간 미래 맵 (일요일 또는 매일 갱신)
+        try:
+            from src.analysis.weekly_future_map import generate_weekly_future_map
+            from datetime import datetime as _dt
+            _end_dt = _dt.strptime(date_str, "%Y-%m-%d")
+            _meta = generate_weekly_future_map(_end_dt, _Path(project_root), window_days=7)
+            logger.info(
+                "weekly_future_map_done week=%s dates=%d/%d gti_avg=%.1f",
+                _meta["week_label"], _meta["dates_with_data"],
+                _meta["window_days"], _meta["gti_avg"],
+            )
+        except Exception as exc:
+            logger.warning("weekly_future_map_failed error=%s", exc)
 
     def _collect_final_outputs(self) -> dict[str, str]:
         """Collect paths of final output files.
