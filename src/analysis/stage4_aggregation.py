@@ -576,19 +576,23 @@ class Stage4Aggregator:
         if "published_at" not in articles_table.column_names:
             return []
 
+        # Return empty string for missing dates. Caller (_run_dtm) filters
+        # them out before handing to BERTopic.topics_over_time, preventing
+        # the 1970-01-01 epoch fallback from polluting DTM bins.
         timestamps = []
         pub_col = articles_table.column("published_at")
         for val in pub_col.to_pylist():
             if val is not None:
-                # Handle both datetime objects and strings
                 if hasattr(val, "strftime"):
                     timestamps.append(val.strftime("%Y-%m-%d"))
                 elif isinstance(val, str):
-                    timestamps.append(val[:10])
+                    s = val[:10]
+                    timestamps.append(s if len(s) == 10 and s[4] == "-" else "")
                 else:
-                    timestamps.append(str(val)[:10])
+                    s = str(val)[:10]
+                    timestamps.append(s if len(s) == 10 and s[4] == "-" else "")
             else:
-                timestamps.append("1970-01-01")
+                timestamps.append("")
         return timestamps
 
     @staticmethod
@@ -669,7 +673,8 @@ class Stage4Aggregator:
             import sys
             import types as _types
 
-            _spacy_mocked = "spacy" not in sys.modules
+            # Python 3.14 only: pydantic v1 schema fails; 3.13 works natively.
+            _spacy_mocked = ("spacy" not in sys.modules) and (sys.version_info >= (3, 14))
             if _spacy_mocked:
                 sys.modules["spacy"] = _types.ModuleType("spacy")
 
@@ -904,12 +909,45 @@ class Stage4Aggregator:
         try:
             import pandas as pd
 
-            # Convert string dates to pandas Timestamps
-            ts_series = pd.to_datetime(timestamps, errors="coerce")
+            # Filter out invalid/empty timestamps BEFORE passing to BERTopic.
+            # Previously, empty strings and None values were coerced to NaT
+            # and then collapsed to unix epoch (1970-01-01) by BERTopic,
+            # producing a single corrupt DTM bin regardless of actual dates.
+            valid_docs: list[str] = []
+            valid_ts: list[pd.Timestamp] = []
+            dropped = 0
+            for doc, ts in zip(docs, timestamps):
+                if not ts:
+                    dropped += 1
+                    continue
+                parsed = pd.to_datetime(ts, errors="coerce")
+                if pd.isna(parsed):
+                    dropped += 1
+                    continue
+                valid_docs.append(doc)
+                valid_ts.append(parsed)
 
-            # topics_over_time requires the original docs and timestamps
+            if not valid_docs:
+                logger.warning(
+                    "stage4_dtm_skip",
+                    reason="no valid timestamps after filtering",
+                    dropped=dropped,
+                )
+                return None
+
+            if dropped > 0:
+                logger.info(
+                    "stage4_dtm_timestamps_filtered",
+                    valid=len(valid_docs),
+                    dropped=dropped,
+                )
+
+            # topics_over_time requires a pandas Series (not DatetimeIndex)
+            # to produce correct date bins.
+            ts_series = pd.Series(valid_ts)
+
             topics_over_time = bertopic_model.topics_over_time(
-                docs,
+                valid_docs,
                 ts_series,
                 nr_bins=None,  # Use original timestamps (daily)
                 evolution_tuning=True,
@@ -918,9 +956,17 @@ class Stage4Aggregator:
 
             records: list[dict[str, Any]] = []
             for _, row in topics_over_time.iterrows():
+                ts_val = row["Timestamp"]
+                # Format the timestamp defensively. pd.Timestamp → ISO, NaT → skip.
+                if pd.isna(ts_val):
+                    continue
+                if hasattr(ts_val, "strftime"):
+                    date_str = ts_val.strftime("%Y-%m-%d")
+                else:
+                    date_str = str(ts_val)[:10]
                 records.append({
                     "topic_id": int(row["Topic"]),
-                    "date": str(row["Timestamp"])[:10],
+                    "date": date_str,
                     "frequency": int(row["Frequency"]),
                     "representation": str(row.get("Words", "")),
                 })

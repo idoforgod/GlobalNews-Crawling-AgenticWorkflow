@@ -538,7 +538,7 @@ class Stage3ArticleAnalyzer:
 
         if self._en_sentiment_available and self._en_sentiment_pipeline is not None:
             try:
-                truncated = text[:MAX_TEXT_LENGTH * 4]  # chars, tokenizer truncates
+                truncated = text[:MAX_TEXT_LENGTH * 2]  # chars, tokenizer truncates
                 result = self._en_sentiment_pipeline(truncated)[0]
                 raw_label = result["label"].lower()
                 raw_score = result["score"]
@@ -579,7 +579,7 @@ class Stage3ArticleAnalyzer:
             and self._multilingual_sentiment_pipeline is not None
         ):
             try:
-                truncated = text[:MAX_TEXT_LENGTH * 4]
+                truncated = text[:MAX_TEXT_LENGTH * 2]
                 result = self._multilingual_sentiment_pipeline(truncated)[0]
                 raw_label = result["label"].lower()
                 raw_score = result["score"]
@@ -600,7 +600,7 @@ class Stage3ArticleAnalyzer:
         # trained on tweets/reviews, (3) NLI-based = understands context.
         if self._zeroshot_available and self._zeroshot_pipeline is not None:
             try:
-                truncated = text[:MAX_TEXT_LENGTH * 2]
+                truncated = text[:MAX_TEXT_LENGTH]
                 result = self._zeroshot_pipeline(
                     truncated,
                     candidate_labels=["positive", "negative", "neutral"],
@@ -634,7 +634,7 @@ class Stage3ArticleAnalyzer:
 
         if self._ko_sentiment_available and self._ko_sentiment_pipeline is not None:
             try:
-                truncated = text[:MAX_TEXT_LENGTH * 4]
+                truncated = text[:MAX_TEXT_LENGTH * 2]
                 result = self._ko_sentiment_pipeline(truncated)[0]
                 raw_label = result["label"].lower()
                 raw_score = result["score"]
@@ -737,7 +737,7 @@ class Stage3ArticleAnalyzer:
 
         if self._zeroshot_available and self._zeroshot_pipeline is not None:
             try:
-                truncated = text[:MAX_TEXT_LENGTH * 4]
+                truncated = text[:MAX_TEXT_LENGTH * 2]
                 result = self._zeroshot_pipeline(
                     truncated,
                     candidate_labels=PLUTCHIK_EMOTIONS,
@@ -779,7 +779,7 @@ class Stage3ArticleAnalyzer:
 
         if self._zeroshot_available and self._zeroshot_pipeline is not None:
             try:
-                truncated = text[:MAX_TEXT_LENGTH * 4]
+                truncated = text[:MAX_TEXT_LENGTH * 2]
                 result = self._zeroshot_pipeline(
                     truncated,
                     candidate_labels=STEEPS_LABELS,

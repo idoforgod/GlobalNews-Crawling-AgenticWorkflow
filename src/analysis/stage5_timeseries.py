@@ -287,17 +287,21 @@ def _get_memory_gb() -> float:
     """Return current RSS memory usage in GB.
 
     Uses resource.getrusage on macOS/Linux. Falls back to 0.0 on failure.
+
+    Platform-specific unit handling:
+      - macOS (darwin): ru_maxrss is in bytes → divide by 1024^3
+      - Linux: ru_maxrss is in kilobytes → divide by 1024^2
     """
     try:
+        import sys
         usage = resource.getrusage(resource.RUSAGE_SELF)
-        # macOS reports maxrss in bytes, Linux in kilobytes
-        rss_bytes = usage.ru_maxrss
-        if rss_bytes > 1e12:
-            # Already bytes (macOS)
-            return rss_bytes / (1024 ** 3)
+        rss = usage.ru_maxrss
+        if sys.platform == "darwin":
+            # macOS reports bytes
+            return rss / (1024 ** 3)
         else:
-            # Kilobytes (Linux)
-            return rss_bytes / (1024 ** 2)
+            # Linux reports kilobytes
+            return rss / (1024 ** 2)
     except Exception:
         return 0.0
 

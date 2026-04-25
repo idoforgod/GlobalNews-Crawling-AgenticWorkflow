@@ -1036,12 +1036,12 @@ class CrawlingPipeline:
             if article is None:
                 return
 
-            # Freshness check — same 24h lookback as normal path
+            # Freshness check — per-site lookback window (defaults to 24h)
             if article.published_at is not None:
                 pub_dt = article.published_at
                 if pub_dt.tzinfo is None:
                     pub_dt = pub_dt.replace(tzinfo=timezone.utc)
-                if pub_dt < self._lookback_cutoff:
+                if pub_dt < self._site_lookback_cutoff(site_cfg):
                     logger.debug(
                         "bypass_article_outside_24h site_id=%s url=%s published_at=%s",
                         site_id, url[:80], pub_dt.isoformat(),
@@ -1120,7 +1120,7 @@ class CrawlingPipeline:
         if published_at is not None:
             if published_at.tzinfo is None:
                 published_at = published_at.replace(tzinfo=timezone.utc)
-            if published_at < self._lookback_cutoff:
+            if published_at < self._site_lookback_cutoff(site_cfg):
                 return None
 
         title = url_obj.title_hint.strip()
@@ -1598,6 +1598,28 @@ class CrawlingPipeline:
 
     _DISCOVERY_MAX_RETRIES = 2  # C-2: retry discovery up to 2 times on failure
 
+    def _site_lookback_hours(self, site_cfg: dict[str, Any]) -> int:
+        """Resolve per-site lookback window in hours.
+
+        Reads ``crawl.lookback_hours`` from the site config, falling back to
+        the global ``CRAWL_LOOKBACK_HOURS`` (24h) when unset or invalid. This
+        lets weekly/investigative publishers (e.g. 38north, propublica) keep
+        a wider freshness window without dropping 100% of their content.
+        """
+        crawl_cfg = site_cfg.get("crawl") or {}
+        raw = crawl_cfg.get("lookback_hours")
+        if isinstance(raw, bool):
+            return CRAWL_LOOKBACK_HOURS
+        if isinstance(raw, (int, float)) and raw > 0:
+            return max(1, int(raw))
+        return CRAWL_LOOKBACK_HOURS
+
+    def _site_lookback_cutoff(self, site_cfg: dict[str, Any]) -> datetime:
+        """UTC datetime below which articles from this site are stale."""
+        return self._crawl_start_utc - timedelta(
+            hours=self._site_lookback_hours(site_cfg)
+        )
+
     def _discover_urls(
         self,
         site_id: str,
@@ -1622,9 +1644,17 @@ class CrawlingPipeline:
         discovered: list[DiscoveredURL] = []
         last_error: Exception | None = None
 
+        # Per-site lookback window → URLDiscovery uses days-granularity.
+        # Round up so a 24h window becomes 1 day (matches legacy behaviour)
+        # and a 168h (1 week) window becomes 7 days.
+        lookback_hours = self._site_lookback_hours(site_cfg)
+        max_age_days = max(1, (lookback_hours + 23) // 24)
+
         for attempt in range(1, self._DISCOVERY_MAX_RETRIES + 1):
             try:
-                discovered = self._url_discovery.discover(site_cfg, site_id)
+                discovered = self._url_discovery.discover(
+                    site_cfg, site_id, max_age_days=max_age_days,
+                )
                 if discovered:
                     break
                 # Empty result on first attempt — retry once (RSS might be temporarily empty)
@@ -1667,6 +1697,20 @@ class CrawlingPipeline:
                     site_id, len(discovered),
                     block_type.value if block_type else "unknown",
                 )
+                # Reset both circuit breakers: bypass proved the site is reachable,
+                # so a CB that opened on earlier 4xx/5xx errors is now stale.
+                # Without this reset, article extraction (which uses the same
+                # NetworkGuard CB) is blocked immediately even though UA rotation works.
+                self._circuit_breakers.reset(site_id)
+                if self._guard is not None:
+                    ng_cb = self._guard._circuit_breakers.get(site_id)
+                    if ng_cb is not None:
+                        ng_cb.reset()
+                        logger.info(
+                            "circuit_breaker_reset_after_bypass site_id=%s "
+                            "— bypass succeeded; CB cleared for article extraction",
+                            site_id,
+                        )
                 # Update bypass_state SOT for cross-crawl learning
                 self._update_bypass_state(site_id, success=True, block_type=block_type)
             else:
@@ -2144,6 +2188,16 @@ class CrawlingPipeline:
                 jitter_seconds=rate_limit * 0.3,
             )
 
+        # NEVER_ABANDON force-half-open rate limit. Without a cap a site
+        # that is fully blocked (e.g. every URL → 403) can churn through its
+        # entire URL list re-opening the circuit for each one, producing
+        # thousands of near-identical log lines (rg: 6,046 observed). We
+        # still honour CRAWL_NEVER_ABANDON by allowing the site another
+        # pass in the outer retry loop — we just stop hammering it within
+        # a single pass once the probe pattern is clearly failing.
+        force_reopen_count = 0
+        force_reopen_cap = 20
+
         for url_obj in urls:
             # Cooperative deadline check — yield worker at URL boundary.
             # P1: deadline_yielded flag prevents false completion marking.
@@ -2197,12 +2251,27 @@ class CrawlingPipeline:
             # Circuit breaker — D-7: CRAWL_NEVER_ABANDON from constants.py
             if not self._circuit_breakers.is_allowed(site_id):
                 if CRAWL_NEVER_ABANDON:
-                    self._circuit_breakers.force_half_open(site_id)
-                    logger.warning(
-                        "circuit_breaker_force_half_open site_id=%s — "
-                        "CRAWL_NEVER_ABANDON active, retrying",
-                        site_id,
-                    )
+                    if force_reopen_count < force_reopen_cap:
+                        self._circuit_breakers.force_half_open(site_id)
+                        force_reopen_count += 1
+                        logger.warning(
+                            "circuit_breaker_force_half_open site_id=%s "
+                            "count=%s/%s — CRAWL_NEVER_ABANDON active, retrying",
+                            site_id, force_reopen_count, force_reopen_cap,
+                        )
+                    else:
+                        # Stop hammering this pass; outer retry loop (L3/L4)
+                        # will give the site a fresh chance with an escalated
+                        # strategy rather than flooding the log per-URL.
+                        logger.warning(
+                            "circuit_breaker_force_cap_reached site_id=%s "
+                            "cap=%s — pausing this pass",
+                            site_id, force_reopen_cap,
+                        )
+                        result.errors.append(
+                            f"Circuit breaker force-reopen cap ({force_reopen_cap}) reached"
+                        )
+                        break
                 else:
                     logger.warning("circuit_breaker_tripped site_id=%s", site_id)
                     result.errors.append("Circuit breaker opened during crawl")
@@ -2249,26 +2318,27 @@ class CrawlingPipeline:
                     is_paywall_truncated=article.is_paywall_truncated,
                 )
 
-                # 24-hour lookback filter (absolute rule for daily runs).
-                # Drop articles published before the cutoff even if they
-                # passed the coarser URL-discovery date filter.
+                # Per-site lookback filter (defaults to 24h).
+                # Drop articles published before the site-specific cutoff even
+                # if they passed the coarser URL-discovery date filter.
                 # NOTE: article.published_at is datetime|None (not str).
                 if article.published_at is not None:
                     pub_dt = article.published_at
                     if pub_dt.tzinfo is None:
                         pub_dt = pub_dt.replace(tzinfo=timezone.utc)
-                    if pub_dt < self._lookback_cutoff:
+                    site_cutoff = self._site_lookback_cutoff(site_cfg)
+                    if pub_dt < site_cutoff:
                         result.skipped_freshness_count += 1
                         # Extraction succeeded — record success so circuit
                         # breakers and retry manager stay accurate.
                         self._retry_manager.mark_url_success(site_id, url_obj.url)
                         self._circuit_breakers.record_success(site_id)
                         logger.debug(
-                            "article_outside_24h site_id=%s url=%s published_at=%s cutoff=%s",
+                            "article_outside_lookback site_id=%s url=%s published_at=%s cutoff=%s",
                             site_id,
                             url_obj.url[:80],
                             pub_dt.isoformat(),
-                            self._lookback_cutoff.isoformat(),
+                            site_cutoff.isoformat(),
                         )
                         continue
 

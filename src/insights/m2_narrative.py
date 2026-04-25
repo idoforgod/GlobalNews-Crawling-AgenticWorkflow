@@ -140,8 +140,17 @@ def _safe_explode_entities(
 
     # Handle stringified lists (e.g. "['John', 'Jane']")
     def _parse(val: Any) -> list[str]:
-        if isinstance(val, list):
+        # pyarrow returns list-typed columns as numpy.ndarray of object,
+        # not as plain Python lists. Treat any iterable-of-items the same
+        # as a list. Scalars (str) handled below.
+        if isinstance(val, (list, tuple)):
             return [str(v).strip() for v in val if v]
+        try:
+            import numpy as _np
+            if isinstance(val, _np.ndarray):
+                return [str(v).strip() for v in val.tolist() if v]
+        except ImportError:
+            pass
         if isinstance(val, str):
             val = val.strip()
             if val.startswith("["):

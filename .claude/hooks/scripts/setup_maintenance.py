@@ -39,13 +39,20 @@ STALE_ARCHIVE_SECONDS = STALE_ARCHIVE_DAYS * 24 * 3600
 # work_log.jsonl size warning threshold (1MB)
 WORK_LOG_SIZE_WARN = 1_000_000
 
-# Hook scripts to re-validate (21 scripts)
+# Hook scripts to re-validate (26 scripts)
 # D-7: Intentionally duplicated in setup_init.py — setup scripts are
 # independent from _context_lib.py by design (no import dependency).
+# Phase 0.1 (2026-04-09): added _execution_lib.py + block_sot_direct_edit.py
+# Phase 0.2 (2026-04-09): added _evidence_lib.py, _semantic_gate_lib.py, _longitudinal_lib.py
 REQUIRED_SCRIPTS = [
     "_context_lib.py",
+    "_evidence_lib.py",            # NEW Phase 0.2 — Evidence Chain (CE1 stable SHA256)
+    "_execution_lib.py",           # NEW Phase 0.1 — execution: section schema + helpers
+    "_longitudinal_lib.py",        # NEW Phase 0.2 — DoD/WoW/MoM deltas + anomaly detection
+    "_semantic_gate_lib.py",       # NEW Phase 0.2 — SG1/SG2/SG3 statistical primitives
     "block_destructive_commands.py",
     "block_secret_leak.py",
+    "block_sot_direct_edit.py",    # NEW Phase 0.1 — SOT direct Edit/Write physical block
     "block_test_file_edit.py",
     "context_guard.py",
     "diagnose_context.py",

@@ -580,11 +580,15 @@ def _compute_narrative_economics(
 
 
 def _parse_entities(entities_value: Any) -> list[str]:
-    """Parse entities_org column which may be a list, string, or NaN."""
+    """Parse entities_org column which may be a list, string, numpy array, or NaN."""
     if entities_value is None:
         return []
-    if isinstance(entities_value, list):
+    if isinstance(entities_value, (list, tuple)):
         return [str(e).strip() for e in entities_value if e]
+    # pyarrow hands list columns back as numpy.ndarray of object — treat
+    # them as iterable sequences, not scalars.
+    if isinstance(entities_value, np.ndarray):
+        return [str(e).strip() for e in entities_value.tolist() if e]
     if isinstance(entities_value, str):
         if not entities_value.strip():
             return []

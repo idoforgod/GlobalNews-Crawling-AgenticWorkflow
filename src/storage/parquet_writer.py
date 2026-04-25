@@ -59,6 +59,7 @@ logger = get_analysis_logger()
 # Nullability: published_at/crawled_at are nullable=True (timestamps may be missing)
 ARTICLES_PA_SCHEMA = pa.schema([
     pa.field("article_id",   pa.utf8(),                    nullable=False),
+    pa.field("evidence_id",  pa.utf8(),                    nullable=True),
     pa.field("url",          pa.utf8(),                    nullable=False),
     pa.field("title",        pa.utf8(),                    nullable=False),
     pa.field("body",         pa.utf8(),                    nullable=False),

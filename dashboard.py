@@ -16,6 +16,7 @@ import datetime
 import json
 import re
 import sqlite3
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -26,11 +27,121 @@ import plotly.graph_objects as go
 import streamlit as st
 from wordcloud import WordCloud
 
+import dashboard_insights as di
+
 # ---------------------------------------------------------------------------
 # Base paths
 # ---------------------------------------------------------------------------
 
-DATA_DIR = Path(__file__).parent / "data"
+PROJECT_ROOT = Path(__file__).parent
+DATA_DIR = PROJECT_ROOT / "data"
+
+
+# ---- Chart Interpretations loader + renderer (ADR-082) --------------------
+# Loads data/analysis/{date}/interpretations.json and renders a standardized
+# 3-layer card (해석 / 인사이트 / 미래통찰) above existing charts.
+
+
+@st.cache_data(ttl=300)
+def _load_interpretations(date: str) -> dict:
+    """Cached loader for interpretations.json. Returns {} on miss."""
+    p = DATA_DIR / "analysis" / date / "interpretations.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _render_interpretation_card(
+    tab_id: str, interpretations: dict, *, default_expanded: bool = False,
+) -> None:
+    """Render the 3-layer card at the top of a tab.
+
+    Contract: reads data only (no writes). Graceful when entry is missing,
+    FAILED, or empty — surfaces a clear status message + regenerate hint.
+    """
+    tabs = (interpretations or {}).get("tabs") or {}
+    entry = tabs.get(tab_id)
+
+    # Missing: no interpretations generated yet for this tab
+    if not entry:
+        st.info(
+            f"**{tab_id}** 탭의 해석이 아직 생성되지 않았습니다. "
+            f"`python3 scripts/reports/generate_chart_interpretations.py "
+            f"--date {(interpretations or {}).get('date', '{date}')} "
+            f"--only {tab_id}` 또는 `/generate-chart-interpretations` 실행."
+        )
+        return
+
+    status = entry.get("status")
+    if status != "PASS":
+        reason = entry.get("reason") or status or "unknown"
+        st.warning(
+            f"해석 생성 실패 · {status} · {reason}. "
+            "🔁 버튼으로 재생성할 수 있습니다."
+        )
+        if st.button(f"🔁 {tab_id} 재생성", key=f"regen_{tab_id}"):
+            import subprocess as _sub
+            _log = (
+                PROJECT_ROOT / "logs"
+                / f"chart-interp-{tab_id}-{interpretations.get('date','run')}.log"
+            )
+            _log.parent.mkdir(parents=True, exist_ok=True)
+            _proc = _sub.Popen([
+                sys.executable,
+                str(PROJECT_ROOT / "scripts" / "reports"
+                    / "generate_chart_interpretations.py"),
+                "--date", interpretations.get("date", ""),
+                "--only", tab_id,
+                "--project-dir", str(PROJECT_ROOT),
+            ], stdout=_log.open("w"), stderr=_sub.STDOUT)
+            st.toast(f"재생성 시작 (PID {_proc.pid}) — 페이지 새로고침 권장")
+        return
+
+    # PASS path — render 3-layer card
+    with st.expander("📖 해석 · 인사이트 · 미래통찰",
+                     expanded=default_expanded):
+        c1, c2, c3 = st.columns([1.1, 1.5, 1.3])
+
+        with c1:
+            st.markdown("**🌱 해석**")
+            interp_md = (entry.get("interpretation") or {}).get("md", "")
+            if interp_md:
+                st.markdown(interp_md)
+            else:
+                st.caption("_해석 미생성_")
+
+        with c2:
+            st.markdown("**💡 인사이트**")
+            insight = entry.get("insight") or {}
+            for b in insight.get("bullets", []):
+                st.markdown(f"- {b}")
+            refs = insight.get("cross_tab_refs") or []
+            if refs:
+                st.caption(
+                    "교차 참조: " + ", ".join(r for r in refs if r)
+                )
+
+        with c3:
+            st.markdown("**🔮 미래통찰**")
+            future = entry.get("future") or {}
+            for b in future.get("bullets", []):
+                st.markdown(f"- {b}")
+            src_refs = future.get("source_refs") or []
+            for r in src_refs:
+                label = r.get("type") or ""
+                section = r.get("section") or r.get("item_index") or ""
+                st.caption(f"→ {label}: {section}")
+
+        meta = entry.get("metadata") or {}
+        st.caption(
+            f"Generated · attempts {meta.get('attempts', '?')} · "
+            f"{meta.get('elapsed_seconds', '?')}s · "
+            f"model {meta.get('model', '?')} · "
+            f"template {interpretations.get('template_version', '?')}"
+        )
 
 # Sub-directory names that contain date-partitioned outputs
 _DATE_PARTITIONED_DIRS = ("raw", "processed", "features", "analysis", "output")
@@ -443,19 +554,542 @@ st.caption(f"Period: **{period}** | {_period_label}")
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_overview, tab_topics, tab_sentiment, tab_timeseries, tab_wordcloud, tab_explorer = st.tabs([
+(
+    tab_summary, tab_overview, tab_topics, tab_sentiment, tab_timeseries,
+    tab_wordcloud, tab_explorer, tab_w3_insight, tab_dci, tab_newspaper,
+) = st.tabs([
+    "📋 Run Summary",
     "📊 Overview",
     "🏷️ Topics",
     "😊 Sentiment & Emotions",
     "📈 Time Series",
     "☁️ Word Cloud",
     "🔍 Article Explorer",
+    "🧠 W3 Insight Brief",
+    "🔬 DCI (Independent Workflow)",
+    "📰 Newspaper (WF5)",
 ])
+
+# ========================= TAB 0: RUN SUMMARY (integrated) =================
+
+with tab_summary:
+    st.header("📋 Integrated Run Summary — W1 → W2 → W3 → W4 + DCI")
+    st.caption(
+        "Consolidated view of every workflow artifact produced for the "
+        "selected date. Reflects the independent-DCI track alongside the "
+        "W1→W2→W3→W4(Master) chain."
+    )
+
+    # ---- Date selector ----
+    import json as _json
+    from pathlib import Path as _Path
+    from datetime import datetime as _dt
+
+    _raw_dir = DATA_DIR / "raw"
+    _available_dates = sorted(
+        [p.name for p in _raw_dir.iterdir() if p.is_dir()],
+        reverse=True,
+    ) if _raw_dir.exists() else []
+
+    if not _available_dates:
+        st.warning(
+            "No crawl dates found under `data/raw/`. "
+            "Run the pipeline first: `/run-chain` or `/run-crawl-only`."
+        )
+    else:
+        sel_date = st.selectbox(
+            "Select run date",
+            options=_available_dates,
+            index=0,
+            key="run_summary_date",
+        )
+        run_date_iso = sel_date
+
+        # ==================== 1) PIPELINE STATUS CARDS ====================
+        st.subheader("🚦 Pipeline Stage Status")
+
+        def _stage_status(path: _Path, min_size: int = 1) -> tuple[bool, int]:
+            if not path.exists():
+                return False, 0
+            if path.is_dir():
+                return True, sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+            return path.stat().st_size >= min_size, path.stat().st_size
+
+        _w1_jsonl = DATA_DIR / "raw" / sel_date / "all_articles.jsonl"
+        _w1_ok, _w1_size = _stage_status(_w1_jsonl)
+        _w1_articles = 0
+        if _w1_ok:
+            try:
+                with _w1_jsonl.open("r", encoding="utf-8") as f:
+                    _w1_articles = sum(1 for line in f if line.strip())
+            except Exception:
+                _w1_articles = 0
+
+        _w2_out = DATA_DIR / "output" / sel_date
+        _w2_analysis = _w2_out / "analysis.parquet"
+        _w2_signals = _w2_out / "signals.parquet"
+        _w2_topics = _w2_out / "topics.parquet"
+        _w2_sqlite = _w2_out / "index.sqlite"
+        _w2_ok = all(p.exists() for p in [_w2_analysis, _w2_signals, _w2_topics, _w2_sqlite])
+
+        # Best-effort W3 detection: look for any insights run that touches this date
+        _insight_root = DATA_DIR / "insights"
+        _w3_candidates = []
+        if _insight_root.exists():
+            for run_dir in sorted(_insight_root.iterdir(), reverse=True):
+                report = run_dir / "synthesis" / "insight_report.md"
+                if report.exists() and run_dir.is_dir():
+                    mtime = _dt.fromtimestamp(report.stat().st_mtime).strftime("%Y-%m-%d")
+                    if mtime == sel_date or run_dir.name.endswith(sel_date[:7]):
+                        _w3_candidates.append(run_dir)
+        _w3_run = _w3_candidates[0] if _w3_candidates else None
+        _w3_ok = _w3_run is not None
+
+        _w4_en = PROJECT_ROOT / "reports" / "final" / f"integrated-report-{sel_date}.md"
+        _w4_ko = PROJECT_ROOT / "reports" / "final" / f"integrated-report-{sel_date}.ko.md"
+        _w4_ok = _w4_en.exists() and _w4_ko.exists()
+
+        _dci_root = DATA_DIR / "dci" / "runs"
+        _dci_runs_for_date = []
+        if _dci_root.exists():
+            for r in _dci_root.iterdir():
+                if r.is_dir() and sel_date in r.name:
+                    _dci_runs_for_date.append(r)
+        _dci_run = _dci_runs_for_date[0] if _dci_runs_for_date else None
+        _dci_ok = _dci_run is not None and (_dci_run / "final_report.md").exists()
+
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("W1 Crawling", "✅" if _w1_ok else "—", f"{_w1_articles:,} articles")
+        col2.metric("W2 Analysis", "✅" if _w2_ok else "—",
+                    f"{(_w2_analysis.stat().st_size // 1024) if _w2_analysis.exists() else 0:,} KB analysis")
+        col3.metric("W3 Insight", "✅" if _w3_ok else "—",
+                    _w3_run.name if _w3_run else "not run")
+        col4.metric("W4 Master", "✅" if _w4_ok else "—",
+                    "EN + KO" if _w4_ok else "not built")
+        col5.metric("DCI", "✅" if _dci_ok else "—",
+                    _dci_run.name if _dci_run else "not run")
+
+        st.divider()
+
+        # ==================== 1.5) PUBLIC NARRATIVE 3-LAYER ==============
+        st.subheader("📖 일반인용 3-Layer 해석")
+        st.caption(
+            "해석(Interpretation) · 통찰(Insight) · 미래(Future) — 전문용어 없이, "
+            "모든 숫자는 `facts_pool.json`에서 검증됨."
+        )
+
+        _public_dir = PROJECT_ROOT / "reports" / "public" / sel_date
+        _pub_meta = _public_dir / "generation_metadata.json"
+
+        _layers_def = [
+            ("L1", "🌱 해석 (Interpretation)", "interpretation", "이게 무슨 뜻?"),
+            ("L2", "💡 통찰 (Insight)",        "insight",        "무슨 패턴?"),
+            ("L3", "🔮 미래 (Future Insight)", "future",         "앞으로는?"),
+        ]
+
+        if not _pub_meta.exists():
+            st.info(
+                "아직 공개 레이어가 생성되지 않았습니다.  \n"
+                "생성: `/generate-public-layers` 또는 "
+                f"`python3 .claude/hooks/scripts/generate_public_layers.py --date {sel_date}`"
+            )
+            if st.button("🔁 지금 생성 (background)", key="gen_public_now"):
+                import subprocess as _sub
+                _log_path = PROJECT_ROOT / "logs" / f"public-layers-{sel_date}.log"
+                _log_path.parent.mkdir(parents=True, exist_ok=True)
+                _proc = _sub.Popen(
+                    ["python3",
+                     str(PROJECT_ROOT / ".claude" / "hooks" / "scripts"
+                         / "generate_public_layers.py"),
+                     "--date", sel_date, "--project-dir", str(PROJECT_ROOT)],
+                    stdout=_log_path.open("w"), stderr=_sub.STDOUT,
+                )
+                st.success(
+                    f"생성 시작됨 (PID {_proc.pid}). "
+                    f"로그: `{_log_path.relative_to(PROJECT_ROOT)}`  \n"
+                    "페이지를 새로 고치면 진행 상황이 반영됩니다."
+                )
+        else:
+            try:
+                _meta = _json.loads(_pub_meta.read_text(encoding="utf-8"))
+            except Exception as _exc:
+                _meta = {"status": f"meta parse error: {_exc}", "layers": []}
+
+            _status_label = _meta.get("status", "?")
+            _status_icon = {
+                "full_pass": "✅",
+                "partial_pass_l3_failed": "⚠️",
+                "failed": "❌",
+            }.get(_status_label, "—")
+            st.caption(
+                f"생성 상태: {_status_icon} **{_status_label}** "
+                f"· 소요 {_meta.get('total_elapsed_seconds', '?')}s "
+                f"· model `{_meta.get('model', '?')}`"
+            )
+
+            _per_layer = {e["layer"]: e for e in _meta.get("layers", [])
+                          if "layer" in e}
+
+            # 3 cards
+            _cards = st.columns(3)
+            for (_lid, _title, _slug, _question), _col in zip(_layers_def, _cards):
+                _card_entry = _per_layer.get(_lid, {})
+                _card_status = _card_entry.get("status", "—")
+                _md_path = _public_dir / f"{_slug}.md"
+                _ko_path = _public_dir / f"{_slug}.ko.md"
+                with _col:
+                    st.markdown(f"**{_title}**")
+                    st.caption(_question)
+                    _color = {"PASS": "🟢", "FAIL": "🔴"}.get(_card_status, "⚪")
+                    st.markdown(f"{_color} **{_card_status}**")
+                    if _card_status == "PASS":
+                        _size = _md_path.stat().st_size if _md_path.exists() else 0
+                        st.caption(f"{_size:,} bytes · "
+                                   f"{_card_entry.get('attempts', '?')}회 시도")
+                        if _ko_path.exists():
+                            st.caption("🇰🇷 한국어 번역 있음")
+
+            st.markdown("---")
+
+            # Full-text expanders (EN/KO toggle)
+            _pub_lang = st.radio(
+                "언어 / Language",
+                options=["한국어", "English"],
+                horizontal=True,
+                key="pub_lang_toggle",
+            )
+            for _lid, _title, _slug, _question in _layers_def:
+                _md_path = _public_dir / f"{_slug}.md"
+                _ko_path = _public_dir / f"{_slug}.ko.md"
+                _show_path = _ko_path if _pub_lang == "한국어" and _ko_path.exists() else _md_path
+                if not _show_path.exists():
+                    continue
+                with st.expander(f"{_title} — 본문 ({_show_path.name})",
+                                 expanded=(_lid == "L1")):
+                    st.markdown(_show_path.read_text(encoding="utf-8"))
+
+            # Regenerate button
+            _cols_btn = st.columns([1, 1, 3])
+            with _cols_btn[0]:
+                if st.button("🔁 재생성", key="pub_regen"):
+                    import subprocess as _sub
+                    _log_path = PROJECT_ROOT / "logs" / f"public-layers-{sel_date}.log"
+                    _proc = _sub.Popen(
+                        ["python3",
+                         str(PROJECT_ROOT / ".claude" / "hooks" / "scripts"
+                             / "generate_public_layers.py"),
+                         "--date", sel_date, "--project-dir", str(PROJECT_ROOT)],
+                        stdout=_log_path.open("w"), stderr=_sub.STDOUT,
+                    )
+                    st.success(f"재생성 시작 (PID {_proc.pid})")
+            with _cols_btn[1]:
+                if st.button("📄 facts_pool 보기", key="pub_facts"):
+                    _facts = _public_dir / "facts_pool.json"
+                    if _facts.exists():
+                        st.json(_json.loads(_facts.read_text(encoding="utf-8")))
+
+        st.divider()
+
+        # ==================== 1.7) W2 / W3 NARRATIVE REPORTS ==============
+        # ADR-081: wired via invoke_claude_agent.py in run_daily.sh.
+        # These reports come from existing agents (@analysis-reporter,
+        # @insight-narrator) that the pure-Python pipeline used to skip.
+
+        _w2_report = PROJECT_ROOT / "workflows" / "analysis" / "outputs" / f"analysis-report-{sel_date}.md"
+        # Find W3 insight run that matches date (weekly/monthly/quarterly)
+        _w3_report = None
+        if _w3_run:
+            _w3_report = _w3_run / "synthesis" / "insight_report.md"
+
+        _has_any_narrative = (_w2_report.exists() or (_w3_report and _w3_report.exists()))
+
+        st.subheader("📚 Workflow Narrative Reports")
+
+        if not _has_any_narrative:
+            st.info(
+                "W2/W3 내러티브 보고서가 아직 생성되지 않았습니다.  \n"
+                "생성: `scripts/run_daily.sh` 다음 실행 시 자동 or "
+                "`python3 scripts/reports/invoke_claude_agent.py --agent analysis-reporter ...`"
+            )
+
+        _narr_cols = st.columns(2)
+        with _narr_cols[0]:
+            st.markdown("**📊 W2 Analysis Report**")
+            if _w2_report.exists():
+                _size = _w2_report.stat().st_size
+                st.caption(
+                    f"{_size:,} bytes · "
+                    f"{_dt.fromtimestamp(_w2_report.stat().st_mtime).strftime('%H:%M')}"
+                )
+                with st.expander("📄 analysis-report.md (CE3 pattern)",
+                                 expanded=False):
+                    st.markdown(_w2_report.read_text(encoding="utf-8"))
+            else:
+                st.caption("— (not generated)")
+        with _narr_cols[1]:
+            st.markdown("**🧠 W3 Insight Report (narrator-refined)**")
+            if _w3_report and _w3_report.exists():
+                _size = _w3_report.stat().st_size
+                st.caption(
+                    f"{_size:,} bytes · "
+                    f"{_dt.fromtimestamp(_w3_report.stat().st_mtime).strftime('%H:%M')} · "
+                    f"run: {_w3_run.name}"
+                )
+                with st.expander("📄 insight_report.md (doctoral)",
+                                 expanded=False):
+                    st.markdown(_w3_report.read_text(encoding="utf-8"))
+            else:
+                st.caption("— (not generated)")
+
+        st.divider()
+
+        # ==================== 2) W2 KPI ROW ====================
+        if _w2_ok:
+            st.subheader("📊 W2 NLP Pipeline Metrics")
+            try:
+                import pandas as _pd
+                _analysis_df = _pd.read_parquet(_w2_analysis)
+                _signals_df = _pd.read_parquet(_w2_signals)
+                _topics_df = _pd.read_parquet(_w2_topics)
+
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Articles analyzed", f"{len(_analysis_df):,}")
+                k2.metric("Signals detected", f"{len(_signals_df):,}")
+                _topics_unique = (
+                    _topics_df["topic_id"].nunique()
+                    if "topic_id" in _topics_df.columns else len(_topics_df)
+                )
+                k3.metric("Unique topics", f"{_topics_unique:,}")
+                _sent_col = next(
+                    (c for c in _analysis_df.columns
+                     if "sentiment" in c.lower() and "score" in c.lower()),
+                    None,
+                )
+                if _sent_col:
+                    k4.metric(
+                        "Mean sentiment",
+                        f"{_analysis_df[_sent_col].mean():.3f}",
+                    )
+                else:
+                    k4.metric("Columns", f"{len(_analysis_df.columns)}")
+            except Exception as _exc:
+                st.warning(f"W2 parquet read error: {_exc}")
+
+        st.divider()
+
+        # ==================== 3) W3 INSIGHT SNAPSHOT ====================
+        if _w3_ok:
+            st.subheader(f"🧠 W3 Insight — {_w3_run.name}")
+            _w3_report = _w3_run / "synthesis" / "insight_report.md"
+            _w3_findings = _w3_run / "synthesis" / "key_findings.json"
+            _w3_modules_dir = _w3_run
+
+            m1, m2, m3 = st.columns(3)
+            _module_names = [
+                d.name for d in _w3_modules_dir.iterdir()
+                if d.is_dir() and d.name != "synthesis"
+            ]
+            m1.metric("Modules run", len(_module_names))
+            if _w3_findings.exists():
+                try:
+                    _kf = _json.loads(_w3_findings.read_text(encoding="utf-8"))
+                    _n_findings = len(_kf) if isinstance(_kf, list) else len(_kf.get("findings", []))
+                    m2.metric("Key findings", _n_findings)
+                except Exception:
+                    m2.metric("Key findings", "?")
+            m3.metric(
+                "Report size",
+                f"{_w3_report.stat().st_size // 1024} KB" if _w3_report.exists() else "—",
+            )
+
+            if _w3_report.exists():
+                with st.expander("📄 insight_report.md (preview)", expanded=False):
+                    st.markdown(_w3_report.read_text(encoding="utf-8"))
+
+        st.divider()
+
+        # ==================== 4) W4 MASTER REPORT ====================
+        if _w4_ok:
+            st.subheader("👑 W4 Master Integration Report")
+
+            # Detect pACS/reviewer state from review-logs if available
+            _review_logs = PROJECT_ROOT / "review-logs"
+            _meta_log = _review_logs / f"phase-master-meta-{sel_date}.md"
+            _narr_log = _review_logs / f"phase-master-narrative-{sel_date}.md"
+            _ev_log = _review_logs / f"phase-master-evidence-{sel_date}.md"
+
+            def _verdict_from_log(p: _Path) -> str:
+                if not p.exists():
+                    return "—"
+                try:
+                    head = p.read_text(encoding="utf-8")[:4000]
+                    for verdict in ("PASS_WITH_WARNINGS", "PASS", "FAIL"):
+                        if verdict in head.upper():
+                            return verdict
+                except Exception:
+                    pass
+                return "?"
+
+            r1, r2, r3 = st.columns(3)
+            r1.metric("@meta-reviewer", _verdict_from_log(_meta_log))
+            r2.metric("@narrative-reviewer", _verdict_from_log(_narr_log))
+            r3.metric("@evidence-reviewer", _verdict_from_log(_ev_log))
+
+            # Language toggle
+            _lang = st.radio(
+                "Report language",
+                options=["English", "한국어"],
+                horizontal=True,
+                key="w4_lang_toggle",
+            )
+            _report_path = _w4_en if _lang == "English" else _w4_ko
+            st.caption(
+                f"Path: `{_report_path.relative_to(PROJECT_ROOT)}` "
+                f"— {_report_path.stat().st_size:,} bytes"
+            )
+            with st.expander("📄 Master report (full text)", expanded=True):
+                st.markdown(_report_path.read_text(encoding="utf-8"))
+
+        st.divider()
+
+        # ==================== 5) DCI SUMMARY (if present) ====================
+        if _dci_ok:
+            st.subheader(f"🔬 DCI — {_dci_run.name}")
+            _dci_report = _dci_run / "final_report.md"
+            _dci_report_ko = _dci_run / "final_report.ko.md"
+            _dci_verdict = _dci_run / "sg_superhuman_verdict.json"
+            _dci_ledger = _dci_run / "evidence_ledger.jsonl"
+
+            d1, d2, d3 = st.columns(3)
+            if _dci_verdict.exists():
+                try:
+                    _v = _json.loads(_dci_verdict.read_text(encoding="utf-8"))
+                    d1.metric("SG decision", _v.get("decision", "?"))
+                    _gates = _v.get("gates", [])
+                    _pass = sum(1 for g in _gates if g.get("status") == "pass")
+                    d2.metric("Gates PASS", f"{_pass}/{len(_gates)}")
+                except Exception:
+                    d1.metric("SG decision", "parse error")
+            if _dci_ledger.exists():
+                try:
+                    _n_markers = sum(
+                        1 for _ in _dci_ledger.open("r", encoding="utf-8") if _.strip()
+                    )
+                    d3.metric("Evidence markers", f"{_n_markers:,}")
+                except Exception:
+                    d3.metric("Evidence markers", "?")
+
+            if _dci_report.exists():
+                with st.expander("📄 DCI final_report.md", expanded=False):
+                    st.markdown(_dci_report.read_text(encoding="utf-8"))
+
+        st.divider()
+
+        # ==================== 6) ARTIFACT LIST ====================
+        st.subheader("📁 Full Artifact Inventory")
+        _artifacts: list[dict] = []
+
+        def _add(role: str, label: str, path: _Path):
+            if path.exists():
+                size = path.stat().st_size if path.is_file() else sum(
+                    f.stat().st_size for f in path.rglob("*") if f.is_file()
+                )
+                _artifacts.append({
+                    "Workflow": role,
+                    "Artifact": label,
+                    "Path": str(path.relative_to(PROJECT_ROOT)),
+                    "Size": f"{size:,} bytes" if size < 1024*1024
+                            else f"{size/1024/1024:.2f} MB",
+                })
+
+        _add("W1", "all_articles.jsonl", _w1_jsonl)
+        _add("W1", ".crawl_state.json",
+             DATA_DIR / "raw" / sel_date / ".crawl_state.json")
+        _add("W2", "analysis.parquet", _w2_analysis)
+        _add("W2", "signals.parquet", _w2_signals)
+        _add("W2", "topics.parquet", _w2_topics)
+        _add("W2", "index.sqlite", _w2_sqlite)
+        _add("W2", "checksums.md5", _w2_out / "checksums.md5")
+        _add("W2", "analysis dir (stage 3-6)", DATA_DIR / "analysis" / sel_date)
+        if _w3_run:
+            _add("W3", "synthesis/insight_report.md",
+                 _w3_run / "synthesis" / "insight_report.md")
+            _add("W3", "synthesis/key_findings.json",
+                 _w3_run / "synthesis" / "key_findings.json")
+            _add("W3", "synthesis/insight_data.json",
+                 _w3_run / "synthesis" / "insight_data.json")
+            _add("W3", "synthesis/intelligence/",
+                 _w3_run / "synthesis" / "intelligence")
+            for mod in ["crosslingual", "economic", "entity",
+                        "geopolitical", "narrative", "temporal"]:
+                _add("W3", f"module: {mod}", _w3_run / mod)
+        _add("W4", "final/EN", _w4_en)
+        _add("W4", "final/KO", _w4_ko)
+        _add("W4", "staging", PROJECT_ROOT / "reports" / "staging"
+             / f"integrated-report-{sel_date}.md")
+        _add("W4", "candidate", PROJECT_ROOT / "reports" / "candidate"
+             / f"integrated-report-{sel_date}.md")
+        _add("W4", "workflows/master/ingest/",
+             PROJECT_ROOT / "workflows" / "master" / "ingest")
+        _add("W4", "workflows/master/audit/",
+             PROJECT_ROOT / "workflows" / "master" / "audit")
+        _add("W4", "workflows/master/longitudinal/",
+             PROJECT_ROOT / "workflows" / "master" / "longitudinal")
+        _add("W4", "workflows/master/synthesis/",
+             PROJECT_ROOT / "workflows" / "master" / "synthesis")
+        _add("W4", "review-logs/meta",
+             PROJECT_ROOT / "review-logs" / f"phase-master-meta-{sel_date}.md")
+        _add("W4", "review-logs/narrative",
+             PROJECT_ROOT / "review-logs" / f"phase-master-narrative-{sel_date}.md")
+        _add("W4", "review-logs/evidence",
+             PROJECT_ROOT / "review-logs" / f"phase-master-evidence-{sel_date}.md")
+        if _dci_run:
+            _add("DCI", "final_report.md", _dci_run / "final_report.md")
+            _add("DCI", "final_report.ko.md", _dci_run / "final_report.ko.md")
+            _add("DCI", "evidence_ledger.jsonl",
+                 _dci_run / "evidence_ledger.jsonl")
+            _add("DCI", "sg_superhuman_verdict.json",
+                 _dci_run / "sg_superhuman_verdict.json")
+            _add("DCI", "executive_summary.md",
+                 _dci_run / "executive_summary.md")
+
+        if _artifacts:
+            try:
+                import pandas as _pd
+                _df_art = _pd.DataFrame(_artifacts)
+                st.dataframe(_df_art, use_container_width=True, hide_index=True)
+                st.caption(f"Total: {len(_artifacts)} artifacts present for {sel_date}")
+            except Exception:
+                for a in _artifacts:
+                    st.text(f"[{a['Workflow']}] {a['Artifact']}: {a['Path']} ({a['Size']})")
+        else:
+            st.info("No artifacts found yet for this date.")
+
 
 # ========================= TAB 1: OVERVIEW =================================
 
 with tab_overview:
+    # ADR-082: Chart Interpretations (Overview tab default-expanded)
+    _interp_date = period if period and re.match(r"\d{4}-\d{2}-\d{2}", str(period)) else (
+        max((p.name for p in (DATA_DIR / "analysis").iterdir()
+             if p.is_dir() and re.match(r"\d{4}-\d{2}-\d{2}", p.name)),
+            default="")
+        if (DATA_DIR / "analysis").exists() else ""
+    )
+    if _interp_date:
+        _render_interpretation_card(
+            "overview", _load_interpretations(_interp_date),
+            default_expanded=True,
+        )
     st.header("Crawling & Pipeline Overview")
+
+    # ----- Auto-Insights -----
+    st.subheader("🎯 Auto-Insights")
+    di.render_insights(
+        st, di.insight_overview_a(raw_df, articles_df, list(active_dates)),
+    )
+    st.divider()
+    st.subheader("📊 Supporting Charts")
 
     if raw_df is not None:
         col1, col2, col3, col4 = st.columns(4)
@@ -578,7 +1212,18 @@ with tab_overview:
 # ========================= TAB 2: TOPICS ====================================
 
 with tab_topics:
+    if _interp_date:
+        _render_interpretation_card(
+            "topics", _load_interpretations(_interp_date),
+            default_expanded=False,
+        )
     st.header("Topic Analysis")
+
+    # ----- Auto-Insights -----
+    st.subheader("🎯 Auto-Insights")
+    di.render_insights(st, di.insight_topics_a(topics_df, merged_df))
+    st.divider()
+    st.subheader("📊 Supporting Charts")
 
     if topics_df is not None:
         topic_counts = (
@@ -660,7 +1305,18 @@ with tab_topics:
 # ========================= TAB 3: SENTIMENT & EMOTIONS =====================
 
 with tab_sentiment:
+    if _interp_date:
+        _render_interpretation_card(
+            "sentiment", _load_interpretations(_interp_date),
+            default_expanded=False,
+        )
     st.header("Sentiment & Emotion Analysis")
+
+    # ----- Auto-Insights -----
+    st.subheader("🎯 Auto-Insights")
+    di.render_insights(st, di.insight_sentiment_a(merged_df))
+    st.divider()
+    st.subheader("📊 Supporting Charts")
 
     if analysis_df is not None:
         col_s1, col_s2 = st.columns(2)
@@ -773,7 +1429,20 @@ with tab_sentiment:
 # ========================= TAB 4: TIME SERIES ===============================
 
 with tab_timeseries:
+    if _interp_date:
+        _render_interpretation_card(
+            "time_series", _load_interpretations(_interp_date),
+            default_expanded=False,
+        )
     st.header("Time Series Analysis")
+
+    # ----- Auto-Insights -----
+    st.subheader("🎯 Auto-Insights")
+    di.render_insights(
+        st, di.insight_timeseries_a(timeseries_df, list(active_dates)),
+    )
+    st.divider()
+    st.subheader("📊 Supporting Charts")
 
     if timeseries_df is not None:
         col_f1, col_f2 = st.columns(2)
@@ -908,6 +1577,11 @@ with tab_timeseries:
 # ========================= TAB 5: WORD CLOUD ================================
 
 with tab_wordcloud:
+    if _interp_date:
+        _render_interpretation_card(
+            "word_cloud", _load_interpretations(_interp_date),
+            default_expanded=False,
+        )
     st.header("Word Cloud Analysis")
 
     if raw_df is not None:
@@ -1130,6 +1804,491 @@ with tab_explorer:
         st.warning("Article data not available.")
 
 
+# ========================= TAB 7: W3 INSIGHT BRIEF =========================
+
+with tab_w3_insight:
+    if _interp_date:
+        _render_interpretation_card(
+            "w3_insight", _load_interpretations(_interp_date),
+            default_expanded=False,
+        )
+    st.header("🧠 W3 Insight Brief — Cross-Module Synthesis")
+
+    insights_root = DATA_DIR / "insights"
+    # Auto-discover the most recent run directory (monthly/weekly/quarterly)
+    run_dirs = [
+        p for p in insights_root.iterdir()
+        if p.is_dir() and p.name.startswith(("monthly-", "weekly-", "quarterly-"))
+    ] if insights_root.exists() else []
+    run_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    if not run_dirs:
+        st.warning(
+            "No W3 insight runs found. Run `python main.py --mode insight "
+            "--window 30` to generate."
+        )
+    else:
+        default_idx = 0
+        selected = st.selectbox(
+            "Select insight run",
+            options=[p.name for p in run_dirs],
+            index=default_idx,
+        )
+        run_dir = insights_root / selected
+        synthesis_dir = run_dir / "synthesis"
+
+        # --- Header: state metadata ---
+        state_path = insights_root / "insight_state.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text())
+            cov = state.get("data_coverage", {})
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric(
+                "Data coverage",
+                f"{cov.get('available_days', 0)} / {cov.get('window_days', 0)} days",
+                f"{cov.get('coverage_ratio', 0)*100:.0f}%",
+            )
+            col2.metric(
+                "Modules completed",
+                f"{len(state.get('modules_completed', []))} / 7",
+            )
+            col3.metric(
+                "Validation",
+                "PASS" if state.get("validation_passed") else "FAIL",
+            )
+            col4.metric(
+                "Total elapsed",
+                f"{state.get('total_elapsed_seconds', 0):.1f}s",
+            )
+
+        st.divider()
+
+        # --- Executive Summary + full report (collapsible) ---
+        report_path = synthesis_dir / "insight_report.md"
+        if report_path.exists():
+            report_md = report_path.read_text(encoding="utf-8")
+            # Extract Executive Summary section for primary display
+            lines = report_md.splitlines()
+            exec_section: list[str] = []
+            capturing = False
+            for ln in lines:
+                if ln.startswith("## Executive Summary"):
+                    capturing = True
+                    continue
+                if capturing and ln.startswith("## "):
+                    break
+                if capturing:
+                    exec_section.append(ln)
+            if exec_section:
+                st.subheader("Executive Summary")
+                st.markdown("\n".join(exec_section).strip())
+
+            with st.expander("📄 Full Insight Report (Markdown)", expanded=False):
+                st.markdown(report_md)
+        else:
+            st.warning(f"insight_report.md not found at {report_path}")
+
+        st.divider()
+
+        # --- Key Findings from insight_data.json ---
+        data_path = synthesis_dir / "insight_data.json"
+        if data_path.exists():
+            insight_data = json.loads(data_path.read_text())
+            st.subheader(f"🎯 Top Findings — {insight_data.get('total_findings', 0)} total")
+
+            top_findings = insight_data.get("top_findings", [])
+            if top_findings:
+                top_df = pd.DataFrame([
+                    {
+                        "Module": f.get("module", ""),
+                        "Metric": f.get("metric", ""),
+                        "Finding": f.get("description", ""),
+                        "Magnitude": round(f.get("magnitude", 0), 3),
+                    }
+                    for f in top_findings
+                ])
+                st.dataframe(top_df, use_container_width=True, hide_index=True)
+
+            # Per-module breakdown chart
+            modules = insight_data.get("modules_available", [])
+            if modules:
+                mod_counts = {}
+                kf_path = synthesis_dir / "key_findings.json"
+                if kf_path.exists():
+                    kf = json.loads(kf_path.read_text())
+                    for f in kf.get("top_5", []):
+                        m = f.get("module", "unknown")
+                        mod_counts[m] = mod_counts.get(m, 0) + 1
+
+        # --- Per-module deep dive ---
+        st.divider()
+        st.subheader("🔬 Per-Module Deep Dive")
+
+        module_files = {
+            "crosslingual": [
+                ("asymmetry_index.parquet", "JSD Asymmetry (per language pair × date)"),
+                ("filter_bubble.parquet", "Filter Bubble (Jaccard overlap)"),
+                ("attention_gaps.parquet", "Attention Gaps (per topic)"),
+            ],
+            "narrative": [
+                ("voice_dominance.parquet", "Voice Dominance (HHI per topic)"),
+                ("media_health.parquet", "Media Health Score"),
+                ("frame_evolution.parquet", "Frame Evolution (STEEPS over time)"),
+            ],
+            "entity": [
+                ("trajectories.parquet", "Entity Trajectories"),
+                ("hidden_connections.parquet", "Hidden Entity Connections"),
+            ],
+            "temporal": [
+                ("velocity_map.parquet", "Cross-Lingual Velocity Map"),
+                ("decay_curves.parquet", "Topic Decay Curves"),
+            ],
+            "geopolitical": [
+                ("bilateral_index.parquet", "Bilateral Relations Index (BRI)"),
+                ("soft_power.parquet", "Soft Power Scores"),
+            ],
+            "economic": [
+                ("epu_index.parquet", "Economic Policy Uncertainty"),
+                ("sector_sentiment.parquet", "Sector Sentiment"),
+                ("narrative_economics.parquet", "Narrative Economics"),
+            ],
+        }
+
+        selected_mod = st.selectbox(
+            "Select module to explore",
+            options=list(module_files.keys()),
+        )
+
+        mod_dir = run_dir / selected_mod
+        if mod_dir.exists():
+            for fn, label in module_files[selected_mod]:
+                fpath = mod_dir / fn
+                if fpath.exists():
+                    try:
+                        df = pd.read_parquet(fpath)
+                        with st.expander(
+                            f"{label} — {len(df)} rows", expanded=False,
+                        ):
+                            if len(df) > 0:
+                                st.dataframe(
+                                    df.head(100),
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+
+                                # Simple visualization for numeric-heavy tables
+                                numeric_cols = df.select_dtypes(
+                                    include=["number"]
+                                ).columns.tolist()
+                                if len(numeric_cols) >= 1 and len(df) <= 5000:
+                                    try:
+                                        primary = numeric_cols[0]
+                                        fig = px.histogram(
+                                            df,
+                                            x=primary,
+                                            nbins=30,
+                                            title=f"Distribution: {primary}",
+                                            height=300,
+                                        )
+                                        fig.update_layout(margin=dict(t=30, b=20))
+                                        st.plotly_chart(
+                                            fig, use_container_width=True,
+                                        )
+                                    except Exception:
+                                        pass
+                            else:
+                                st.info(f"{label}: empty (no qualifying data)")
+                    except Exception as e:
+                        st.error(f"{label}: read error — {e}")
+        else:
+            st.warning(f"Module directory {selected_mod} not found.")
+
+
+# ========================= TAB 8: DCI (Independent Workflow) ================
+
+with tab_dci:
+    st.header("🔬 Deep Content Intelligence — Independent Workflow")
+    st.caption(
+        "14-layer analytic pipeline with char_coverage=1.00 guarantee. "
+        "Run via `python main.py --mode dci --date YYYY-MM-DD`."
+    )
+
+    # Layer status from technique_registry
+    try:
+        from src.config.constants import (
+            DCI_LAYERS,
+            DCI_TECHNIQUES_TOTAL,
+            DCI_TECHNIQUES_P_MODE,
+            DCI_TECHNIQUES_H_MODE,
+            DCI_TECHNIQUES_L_MODE,
+        )
+        from src.dci.orchestrator import (
+            ensure_layers_registered,
+            registered_layer_ids,
+        )
+        ensure_layers_registered()
+        registered = set(registered_layer_ids())
+    except Exception as exc:
+        st.error(f"DCI package import failed: {exc}")
+        DCI_LAYERS = ()
+        registered = set()
+        DCI_TECHNIQUES_TOTAL = 0
+        DCI_TECHNIQUES_P_MODE = 0
+        DCI_TECHNIQUES_H_MODE = 0
+        DCI_TECHNIQUES_L_MODE = 0
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Layers wired", f"{len(registered)} / {len(DCI_LAYERS)}")
+    col2.metric("Techniques total", DCI_TECHNIQUES_TOTAL)
+    col3.metric("P-mode (Pure Python)", DCI_TECHNIQUES_P_MODE)
+    col4.metric("H/L-mode (LLM-bound)",
+                DCI_TECHNIQUES_H_MODE + DCI_TECHNIQUES_L_MODE)
+
+    st.divider()
+    st.subheader("14-Layer Architecture")
+    if DCI_LAYERS:
+        rows = []
+        for layer_id in DCI_LAYERS:
+            rows.append({
+                "Layer": layer_id,
+                "Wired": "✓" if layer_id in registered else "—",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("Latest Run Output")
+
+    dci_run_dir = DATA_DIR / "dci" / "runs"
+    if dci_run_dir.exists():
+        runs = sorted(
+            [p.name for p in dci_run_dir.iterdir() if p.is_dir()],
+            reverse=True,
+        )
+    else:
+        runs = []
+
+    if not runs:
+        st.info(
+            "No DCI runs found yet. Execute "
+            "`python main.py --mode dci --date YYYY-MM-DD` "
+            "to generate one. Use `--dry-run` for a zero-cost smoke run."
+        )
+    else:
+        selected_run = st.selectbox(
+            "Select run date", options=runs, index=0,
+        )
+        run_path = dci_run_dir / selected_run
+        report_path = run_path / "final_report.md"
+        if report_path.exists():
+            st.markdown(report_path.read_text(encoding="utf-8"))
+        else:
+            st.warning(f"No final_report.md at {report_path}")
+
+        kg_path = run_path / "kg.gexf"
+        if kg_path.exists():
+            st.divider()
+            st.subheader("🕸️ Knowledge Graph (3D force layout)")
+            try:
+                import networkx as nx
+                g = nx.read_gexf(kg_path)
+                if g.number_of_nodes() == 0:
+                    st.info("Knowledge graph is empty for this run.")
+                elif g.number_of_nodes() > 500:
+                    st.warning(
+                        f"KG has {g.number_of_nodes()} nodes — "
+                        f"rendering top-100 by degree for responsiveness."
+                    )
+                    # Trim to top-100 nodes by degree
+                    degs = sorted(g.degree(weight="weight"), key=lambda x: -x[1])
+                    keep = {n for n, _ in degs[:100]}
+                    g = g.subgraph(keep).copy()
+
+                if g.number_of_nodes() > 0:
+                    layout = nx.spring_layout(
+                        g, dim=3, seed=42, k=0.5,
+                        iterations=50,
+                    )
+                    edge_x, edge_y, edge_z = [], [], []
+                    for u, v in g.edges():
+                        xa, ya, za = layout[u]
+                        xb, yb, zb = layout[v]
+                        edge_x.extend([xa, xb, None])
+                        edge_y.extend([ya, yb, None])
+                        edge_z.extend([za, zb, None])
+                    node_x = [layout[n][0] for n in g.nodes()]
+                    node_y = [layout[n][1] for n in g.nodes()]
+                    node_z = [layout[n][2] for n in g.nodes()]
+                    node_text = [
+                        f"{n}<br>articles={g.nodes[n].get('article_count', 0)}"
+                        for n in g.nodes()
+                    ]
+                    node_size = [
+                        8 + 2 * g.degree(n, weight="weight")
+                        for n in g.nodes()
+                    ]
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter3d(
+                        x=edge_x, y=edge_y, z=edge_z,
+                        mode="lines",
+                        line=dict(width=1, color="rgba(125,125,125,0.3)"),
+                        hoverinfo="none",
+                        showlegend=False,
+                    ))
+                    fig.add_trace(go.Scatter3d(
+                        x=node_x, y=node_y, z=node_z,
+                        mode="markers",
+                        marker=dict(
+                            size=node_size,
+                            color=node_size,
+                            colorscale="Viridis",
+                            opacity=0.85,
+                        ),
+                        text=node_text,
+                        hoverinfo="text",
+                        showlegend=False,
+                    ))
+                    fig.update_layout(
+                        scene=dict(
+                            xaxis=dict(visible=False),
+                            yaxis=dict(visible=False),
+                            zaxis=dict(visible=False),
+                        ),
+                        height=600,
+                        margin=dict(l=0, r=0, t=20, b=0),
+                        hovermode="closest",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.caption(
+                        f"{g.number_of_nodes()} nodes · "
+                        f"{g.number_of_edges()} edges · "
+                        f"spring_layout seed=42"
+                    )
+            except Exception as exc:
+                st.warning(f"Could not render KG: {exc}")
+
+    st.divider()
+    st.subheader("SG-Superhuman Thresholds")
+    try:
+        from src.config.constants import (
+            DCI_SG_CHAR_COVERAGE_MIN,
+            DCI_SG_TRIPLE_LENS_COVERAGE_MIN,
+            DCI_SG_LLM_BODY_INJECTION_RATIO_MIN,
+            DCI_SG_NLI_VERIFICATION_PASS_RATE_MIN,
+            DCI_SG_TRIADIC_CONSENSUS_RATE_MIN,
+            DCI_SG_ADVERSARIAL_CRITIC_PASS_MIN,
+            DCI_SG_MULTILINGUAL_COVERAGE_MIN,
+        )
+        st.dataframe(pd.DataFrame([
+            {"Gate": "char_coverage",           "Threshold": DCI_SG_CHAR_COVERAGE_MIN},
+            {"Gate": "triple_lens_coverage",    "Threshold": DCI_SG_TRIPLE_LENS_COVERAGE_MIN},
+            {"Gate": "llm_body_injection",      "Threshold": DCI_SG_LLM_BODY_INJECTION_RATIO_MIN},
+            {"Gate": "nli_pass_rate",           "Threshold": DCI_SG_NLI_VERIFICATION_PASS_RATE_MIN},
+            {"Gate": "triadic_consensus",       "Threshold": DCI_SG_TRIADIC_CONSENSUS_RATE_MIN},
+            {"Gate": "adversarial_critic_pass", "Threshold": DCI_SG_ADVERSARIAL_CRITIC_PASS_MIN},
+            {"Gate": "multilingual_coverage",   "Threshold": DCI_SG_MULTILINGUAL_COVERAGE_MIN},
+        ]), use_container_width=True, hide_index=True)
+    except ImportError:
+        st.warning("DCI constants unavailable")
+
+
+# ========================= TAB 9: Newspaper (WF5) ============================
+
+with tab_newspaper:
+    st.header("📰 Personal Newspaper — The Global Ledger")
+    st.caption(
+        "WF5 Independent Workflow (ADR-083). 135,000-word daily + "
+        "205,000-word weekly. 17 editorial agents · 15 principles."
+    )
+
+    _np_root = DATA_DIR.parent / "newspaper"
+    _daily_root = _np_root / "daily"
+    _weekly_root = _np_root / "weekly"
+
+    _daily_editions = sorted(
+        [p.name for p in _daily_root.iterdir() if p.is_dir()],
+        reverse=True,
+    ) if _daily_root.exists() else []
+    _weekly_editions = sorted(
+        [p.name for p in _weekly_root.iterdir() if p.is_dir()],
+        reverse=True,
+    ) if _weekly_root.exists() else []
+
+    np_tab_daily, np_tab_weekly = st.tabs(["📅 Daily", "🗓️ Weekly"])
+
+    with np_tab_daily:
+        if not _daily_editions:
+            st.info(
+                "No daily editions yet. Run "
+                "`python3 scripts/reports/generate_newspaper_daily.py "
+                "--date YYYY-MM-DD` or `/run-newspaper-only`."
+            )
+        else:
+            sel_np_date = st.selectbox(
+                "Select daily edition", _daily_editions,
+                key="np_daily_sel",
+            )
+            _ed = _daily_root / sel_np_date
+            _meta = _ed / "newspaper_metadata.json"
+            if _meta.exists():
+                try:
+                    _m = json.loads(_meta.read_text(encoding="utf-8"))
+                    _stats = _m.get("stats") or {}
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    c1.metric("기사", f"{_stats.get('articles_total', 0):,}")
+                    c2.metric("클러스터", f"{_stats.get('clusters_total', 0):,}")
+                    c3.metric("3각검증", f"{_stats.get('clusters_triangulated', 0):,}")
+                    c4.metric("Dark Corners", f"{_stats.get('countries_dark', 0):,}")
+                    c5.metric("증거 앵커", f"{_stats.get('evidence_markers', 0):,}")
+                    st.caption(
+                        f"Generated {_m.get('generated_at', '')} · "
+                        f"elapsed {_m.get('total_elapsed_seconds', 0)}s · "
+                        f"template {_m.get('template_version', '?')}"
+                    )
+                except Exception as _exc:
+                    st.warning(f"metadata parse: {_exc}")
+            # iframe the actual HTML
+            _idx = _ed / "index.html"
+            if _idx.exists():
+                try:
+                    html = _idx.read_text(encoding="utf-8")
+                    # Inline asset fetch: browser can't access filesystem,
+                    # so inline CSS so iframe renders correctly.
+                    _css = _ed / "assets" / "style.css"
+                    if _css.exists():
+                        html = html.replace(
+                            '<link rel="stylesheet" href="assets/style.css">',
+                            f"<style>{_css.read_text(encoding='utf-8')}</style>",
+                        )
+                    st.components.v1.html(html, height=900, scrolling=True)
+                except Exception as _exc:
+                    st.error(f"render failed: {_exc}")
+            else:
+                st.warning("index.html missing — run the orchestrator first.")
+
+    with np_tab_weekly:
+        if not _weekly_editions:
+            st.info(
+                "No weekly editions yet. Requires ≥ 4 daily editions in the "
+                "ISO week, then run `/run-newspaper-weekly --week YYYY-W##`."
+            )
+        else:
+            sel_week = st.selectbox(
+                "Select weekly edition", _weekly_editions,
+                key="np_weekly_sel",
+            )
+            _wed = _weekly_root / sel_week
+            _idx = _wed / "index.html"
+            if _idx.exists():
+                html = _idx.read_text(encoding="utf-8")
+                _css = _wed / "assets" / "style.css"
+                if _css.exists():
+                    html = html.replace(
+                        '<link rel="stylesheet" href="assets/style.css">',
+                        f"<style>{_css.read_text(encoding='utf-8')}</style>",
+                    )
+                st.components.v1.html(html, height=900, scrolling=True)
+
+
 # ---------------------------------------------------------------------------
 # Sidebar — Cross Analysis summary + meta
 # ---------------------------------------------------------------------------
@@ -1144,10 +2303,96 @@ with st.sidebar:
             st.text(f"  {atype}: {cnt:,}")
 
         st.markdown("---")
-        st.markdown("**Top Entity Pairs (by strength)**")
+        st.markdown("**Top Entity Pairs (by effective strength)**")
+
+        # D-7: saturation workaround. Legacy Stage 6 normalized frame/graphrag
+        # strength with a linear cap that tied 93% of rows at 1.0, making
+        # ranking order-of-insertion. For frame rows we parse KL from the
+        # relationship string; for graphrag we compute from metadata chain
+        # length. All other types use strength as-is. New Stage 6 writes
+        # log-scaled strength directly, so this shim is a no-op going forward.
+        def _effective_strength(row):
+            base = row.get("strength")
+            if pd.isna(base):
+                return np.nan
+            rel = str(row.get("relationship", ""))
+            atype = row.get("analysis_type", "")
+            # Frame: parse KL from relationship when saturated at 1.0.
+            if atype == "frame" and base >= 0.999:
+                import math as _m
+                m = re.search(r"KL=([\d.]+)", rel)
+                if m:
+                    try:
+                        kl = float(m.group(1))
+                        return min(1.0, _m.log1p(kl) / _m.log1p(25.0))
+                    except ValueError:
+                        pass
+            # GraphRAG: legacy min(1.0, len/10) saturates; parse entities
+            # + articles from relationship for monotonic ordering.
+            if atype == "graphrag" and base >= 0.999:
+                import math as _m
+                m = re.search(r"entities=(\d+),\s*articles=(\d+)", rel)
+                if m:
+                    try:
+                        n_ent = int(m.group(1))
+                        n_art = int(m.group(2))
+                        return min(1.0, (
+                            _m.log1p(n_ent) / _m.log1p(500.0) * 0.6
+                            + _m.log1p(n_art) / _m.log1p(200.0) * 0.4
+                        ))
+                    except ValueError:
+                        pass
+            # Agenda: perfect correlation with lag=0 is almost always a
+            # sparse-sample artifact (n=2-3 time points gives |r|=1 trivially).
+            # Penalize to push them below genuine lagged relationships.
+            if atype == "agenda" and base >= 0.999:
+                lag = row.get("lag_days")
+                try:
+                    lag_f = float(lag) if lag is not None else 0.0
+                except (TypeError, ValueError):
+                    lag_f = 0.0
+                if lag_f <= 0.0:
+                    return 0.5  # trivial concurrent — demote
+                # Give a meaningful lag gradient: lag=1 → 0.95, lag=7 → 0.99
+                import math as _m
+                return 0.9 + 0.09 * (_m.log1p(lag_f) / _m.log1p(30.0))
+            return float(base)
+
+        _scored = cross_df[cross_df["strength"].notna()].copy()
+        _scored["_eff"] = _scored.apply(_effective_strength, axis=1)
+        # Secondary: inverse p_value (smaller p → more robust). NaN → 1.0 (back).
+        _scored["_p_key"] = _scored["p_value"].fillna(1.0).astype(float)
+        # Tertiary: raw entity count from graphrag relationship string
+        def _parse_chain_size(rel: str) -> int:
+            m = re.search(r"entities=(\d+)", str(rel))
+            return int(m.group(1)) if m else 0
+        def _parse_chain_articles(rel: str) -> int:
+            m = re.search(r"articles=(\d+)", str(rel))
+            return int(m.group(1)) if m else 0
+        _scored["_chain_ent"] = _scored["relationship"].apply(_parse_chain_size)
+        _scored["_chain_art"] = _scored["relationship"].apply(_parse_chain_articles)
+        # Stratified diversity: cap at 3 rows per analysis_type in top-10
+        # so one saturated type (graphrag) doesn't monopolize the view.
+        _scored = _scored.sort_values(
+            by=["_eff", "_chain_ent", "_chain_art", "_p_key"],
+            ascending=[False, False, False, True],
+        )
+        _per_type_cap = 3
+        _acc = []
+        _seen: dict[str, int] = {}
+        for _, _row in _scored.iterrows():
+            _t = _row["analysis_type"]
+            if _seen.get(_t, 0) >= _per_type_cap:
+                continue
+            _acc.append(_row)
+            _seen[_t] = _seen.get(_t, 0) + 1
+            if len(_acc) >= 10:
+                break
         top_cross = (
-            cross_df[cross_df["strength"].notna()]
-            .nlargest(10, "strength")[["source_entity", "target_entity", "relationship", "strength"]]
+            pd.DataFrame(_acc)
+            [["analysis_type", "source_entity", "target_entity",
+              "relationship", "_eff"]]
+            .rename(columns={"_eff": "strength"})
         )
         if len(top_cross) > 0:
             st.dataframe(top_cross, use_container_width=True, hide_index=True)

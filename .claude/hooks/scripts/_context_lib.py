@@ -914,6 +914,90 @@ def validate_sot_schema(ap_state):
                         f"missing 'decision_log' field"
                     )
 
+    # S10: DCI section. Two valid locations (v1.0+ canonical vs. legacy):
+    #   (canonical v1.0+) execution.runs.{id}.workflows.dci
+    #   (legacy read-only) execution.runs.{id}.workflows.master.phases.dci
+    # Absence at BOTH locations → SKIP (backward compat). Structural checks
+    # only; semantic validation (SG-Superhuman) belongs to src/dci/.
+    # Per ADR-073, writers target the canonical path; legacy remains for
+    # historical runs and RLM query continuity.
+    import re as _re
+    # Accept both canonical "L1.5_meaning" and SOT-encoded "L1_5_meaning"
+    # (sot_manager replaces '.' with '_' because '.' is the path delimiter).
+    _dci_layer_key_re = _re.compile(r"^L-?\d+(?:[._]\d+)?_[a-z_]+$")
+    _dci_valid_statuses = {"running", "completed", "failed", "skipped"}
+
+    def _validate_dci_section(run_id, location, dci):
+        local_warnings = []
+        if not isinstance(dci, dict):
+            local_warnings.append(
+                f"SOT schema S10: execution.runs.{run_id}.workflows.{location} "
+                f"is {type(dci).__name__}, expected dict"
+            )
+            return local_warnings
+        # S10a: status enum
+        dci_status = dci.get("status")
+        if dci_status is not None and dci_status not in _dci_valid_statuses:
+            local_warnings.append(
+                f"SOT schema S10a: {location}.status '{dci_status}' invalid "
+                f"(expected running|completed|failed|skipped)"
+            )
+        # S10b: layers dict + key format
+        dci_layers = dci.get("layers")
+        if dci_layers is not None:
+            if not isinstance(dci_layers, dict):
+                local_warnings.append(
+                    f"SOT schema S10b: {location}.layers is "
+                    f"{type(dci_layers).__name__}, expected dict"
+                )
+            else:
+                for lk in dci_layers:
+                    if not _dci_layer_key_re.match(str(lk)):
+                        local_warnings.append(
+                            f"SOT schema S10b: unrecognized DCI layer "
+                            f"key '{lk}' (expected 'L<n>_<name>')"
+                        )
+        # S10c: semantic_gates must be dict
+        gates = dci.get("semantic_gates")
+        if gates is not None and not isinstance(gates, dict):
+            local_warnings.append(
+                f"SOT schema S10c: {location}.semantic_gates is "
+                f"{type(gates).__name__}, expected dict"
+            )
+        return local_warnings
+
+    execution = ap_state.get("execution")
+    if isinstance(execution, dict):
+        runs = execution.get("runs")
+        if isinstance(runs, dict):
+            for run_id, run in runs.items():
+                if not isinstance(run, dict):
+                    continue
+                workflows = run.get("workflows")
+                if not isinstance(workflows, dict):
+                    continue
+                # Canonical location (v1.0+): workflows.dci
+                canonical_dci = workflows.get("dci")
+                if canonical_dci is not None:
+                    warnings.extend(_validate_dci_section(
+                        run_id,
+                        "dci",
+                        canonical_dci,
+                    ))
+                # Legacy location (read-only, historical runs):
+                # workflows.master.phases.dci
+                master = workflows.get("master")
+                if isinstance(master, dict):
+                    phases = master.get("phases")
+                    if isinstance(phases, dict):
+                        legacy_dci = phases.get("dci")
+                        if legacy_dci is not None:
+                            warnings.extend(_validate_dci_section(
+                                run_id,
+                                "master.phases.dci",
+                                legacy_dci,
+                            ))
+
     return warnings
 
 
@@ -4566,6 +4650,154 @@ def _extract_quality_gate_state(project_dir):
                 )
         except Exception:
             pass
+
+    return lines
+
+
+def _detect_dci_run(ap_state):
+    """Detect whether a DCI workflow run is active in the current SOT.
+
+    P1 Compliance: deterministic dict traversal, no LLM.
+    SOT Compliance: read-only.
+
+    Per ADR-073, ``workflows.dci`` is the canonical v1.0+ location; the
+    legacy nested ``workflows.master.phases.dci`` remains readable for
+    historical runs. Canonical is preferred; legacy returned only when no
+    canonical entry exists.
+
+    Args:
+        ap_state: dict from read_autopilot_state(), or None.
+
+    Returns: ``{"run_id": str, "location": "canonical"|"legacy",
+        "dci": dict}`` or None.
+    """
+    if not ap_state or not isinstance(ap_state, dict):
+        return None
+    execution = ap_state.get("execution")
+    if not isinstance(execution, dict):
+        return None
+    runs = execution.get("runs")
+    if not isinstance(runs, dict):
+        return None
+
+    # Canonical path preferred (v1.0+ workflows.dci)
+    for run_id, run in runs.items():
+        if not isinstance(run, dict):
+            continue
+        workflows = run.get("workflows")
+        if not isinstance(workflows, dict):
+            continue
+        dci = workflows.get("dci")
+        if isinstance(dci, dict):
+            return {
+                "run_id": run_id,
+                "location": "canonical",
+                "dci": dci,
+            }
+
+    # Legacy fallback (workflows.master.phases.dci — historical runs)
+    for run_id, run in runs.items():
+        if not isinstance(run, dict):
+            continue
+        workflows = run.get("workflows")
+        if not isinstance(workflows, dict):
+            continue
+        master = workflows.get("master")
+        if isinstance(master, dict):
+            phases = master.get("phases")
+            if isinstance(phases, dict):
+                dci = phases.get("dci")
+                if isinstance(dci, dict):
+                    return {
+                        "run_id": run_id,
+                        "location": "legacy",
+                        "dci": dci,
+                    }
+    return None
+
+
+def _extract_dci_progress(project_dir):
+    """Extract DCI layer progress for IMMORTAL snapshot preservation.
+
+    P1 Compliance: dict traversal + field lookup only.
+    SOT Compliance: read-only via read_autopilot_state().
+
+    Produces concise markdown lines summarizing each layer's status. The
+    canonical layer order (L-1 → L11) is preserved so readers see the DAG
+    flow at a glance rather than dict-insertion order.
+
+    Returns: list of markdown lines, or empty list when no DCI section.
+    """
+    # Avoid circular import at module load time.
+    try:
+        ap_state = read_autopilot_state(project_dir)
+    except Exception:
+        return []
+    detected = _detect_dci_run(ap_state)
+    if not detected:
+        return []
+
+    dci = detected["dci"]
+    run_id = detected["run_id"]
+    location = detected["location"]
+    lines = [
+        f"> **WF4-DCI Phase 4 active** (run={run_id}, path={location})",
+    ]
+    # Top-level status
+    top_status = dci.get("status")
+    if top_status:
+        lines.append(f"- status: **{top_status}**")
+
+    layers = dci.get("layers")
+    if isinstance(layers, dict) and layers:
+        # Preserve canonical DAG order (D-7 with constants.DCI_LAYERS).
+        canonical_order = (
+            "L-1_external",
+            "L0_discourse",
+            "L1_semantic",
+            "L1.5_meaning",
+            "L2_relations",
+            "L3_kg_hypergraph",
+            "L4_cross_document",
+            "L5_psycho_style",
+            "L6_triadic_synthesis",
+            "L7_graph_of_thought",
+            "L8_monte_carlo",
+            "L9_metacognitive",
+            "L10_final_report",
+            "L11_dashboard",
+        )
+        seen = set()
+        for layer_id in canonical_order:
+            layer_info = layers.get(layer_id)
+            if not isinstance(layer_info, dict):
+                continue
+            seen.add(layer_id)
+            status = layer_info.get("status", "?")
+            elapsed = layer_info.get("elapsed_seconds")
+            article_count = layer_info.get("article_count")
+            marker = {
+                "completed": "✓",
+                "running": "▶",
+                "failed": "✗",
+                "skipped": "○",
+                "pending": "·",
+            }.get(status, "?")
+            parts = [f"{marker} `{layer_id}`: {status}"]
+            if isinstance(elapsed, (int, float)):
+                parts.append(f"{elapsed:.1f}s")
+            if isinstance(article_count, int) and article_count > 0:
+                parts.append(f"{article_count} articles")
+            lines.append(f"  - {' — '.join(parts)}")
+        # Report any unknown layer_ids (defensive — S10 would also flag them)
+        for layer_id in layers:
+            if layer_id not in seen:
+                lines.append(f"  - ? `{layer_id}`: (non-canonical key)")
+
+    gates = dci.get("semantic_gates")
+    if isinstance(gates, dict) and gates:
+        gate_names = list(gates.keys())[:3]
+        lines.append(f"- semantic_gates recorded: {', '.join(gate_names)}")
 
     return lines
 

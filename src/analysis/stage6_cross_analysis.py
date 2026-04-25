@@ -846,8 +846,19 @@ class Stage6CrossAnalyzer:
         """
         result = GrangerResult()
 
+        if len(topic_ids) == 0:
+            logger.warning(
+                "stage6_granger_skip",
+                reason=f"no topic series built (insufficient date span: "
+                       f"need >= {MIN_DAYS_FOR_ANALYSIS} days)",
+            )
+            return result
         if len(topic_ids) < 2:
-            logger.warning("stage6_granger_skip", reason="fewer than 2 topics")
+            logger.warning(
+                "stage6_granger_skip",
+                reason="only 1 topic available (need >= 2 for causality)",
+                n_topics=len(topic_ids),
+            )
             return result
 
         # Check minimum series length
@@ -1002,8 +1013,19 @@ class Stage6CrossAnalyzer:
             return result
 
         # Select top-N topics by total volume
+        if len(topic_ids) == 0:
+            logger.warning(
+                "stage6_pcmci_skip",
+                reason=f"no topic series built (insufficient date span: "
+                       f"need >= {MIN_DAYS_FOR_ANALYSIS} days)",
+            )
+            return result
         if len(topic_ids) < 2:
-            logger.warning("stage6_pcmci_skip", reason="fewer than 2 topics")
+            logger.warning(
+                "stage6_pcmci_skip",
+                reason="only 1 topic available (need >= 2 for causality)",
+                n_topics=len(topic_ids),
+            )
             return result
 
         topic_volumes = {tid: float(np.sum(topic_series[tid])) for tid in topic_ids}
@@ -1867,8 +1889,13 @@ class Stage6CrossAnalyzer:
                 kl_qp = float(np.sum(rel_entr(dist2, dist1)))
                 sym_kl = (kl_pq + kl_qp) / 2.0
 
-                # Normalize to 0-1 range (cap at 10 nats)
-                strength = min(1.0, sym_kl / 10.0)
+                # Log-normalize KL divergence to [0, 1].
+                # Observed sym_kl range in production: 0 - ~20 nats, with many
+                # values between 14 and 18. The previous linear `min(1.0, sym_kl/10)`
+                # saturated 93%+ of rows at 1.0, defeating ranking. log1p scaling
+                # preserves ordering across the full range (D-7: must match
+                # dashboard.py `_effective_strength` for tie-breaking consistency).
+                strength = min(1.0, math.log1p(sym_kl) / math.log1p(25.0))
 
                 # Frame dimension comparison
                 frame_comparison = {}
@@ -2305,7 +2332,10 @@ class Stage6CrossAnalyzer:
             # Create evidence chain record
             top_entities = entity_scores[:10]
             max_weight = max(s for _, s in entity_scores) if entity_scores else 1
-            strength = min(1.0, len(entity_scores) / 10.0)
+            # log1p-normalized so dense chains (20+ entities) remain separable
+            # from medium chains (10-15). Previous `min(1.0, len/10)` saturated
+            # 94% of rows. D-7: dashboard _effective_strength mirrors this.
+            strength = min(1.0, math.log1p(len(entity_scores)) / math.log1p(50.0))
 
             result.n_evidence_chains += 1
             result.records.append(CrossAnalysisRecord(
@@ -2422,44 +2452,41 @@ class Stage6CrossAnalyzer:
                 if not text1 or not text2:
                     continue
 
-                # Truncate texts for NLI model
-                text1 = text1[:512]
-                text2 = text2[:512]
+                # Truncate texts for NLI model (characters, not tokens —
+                # the tokenizer will also truncate to max_length).
+                text1 = text1[:1024]
+                text2 = text2[:1024]
 
-                try:
-                    nli_result = self._nli_pipeline(
-                        f"{text1}",
-                        candidate_labels=["entailment", "contradiction", "neutral"],
-                        hypothesis_template="{}",
-                        multi_label=False,
-                    )
-                    # This is zero-shot; reshape output
-                    if isinstance(nli_result, dict):
-                        labels = nli_result.get("labels", [])
-                        scores = nli_result.get("scores", [])
-                        if labels and scores:
-                            label_scores = dict(zip(labels, scores))
-                            contradiction_score = label_scores.get("contradiction", 0.0)
-                            if contradiction_score > 0.3:
-                                result.n_contradictions += 1
-                                result.records.append(CrossAnalysisRecord(
-                                    analysis_type="contradiction",
-                                    source_entity=f"{src1}:{aid1}",
-                                    target_entity=f"{src2}:{aid2}",
-                                    relationship=f"contradiction (nli_score={contradiction_score:.3f})",
-                                    strength=float(contradiction_score),
-                                    evidence_articles=[aid1, aid2],
-                                    metadata=json.dumps({
-                                        "topic_id": tid,
-                                        "sbert_similarity": round(sim, 4),
-                                        "nli_labels": {k: round(v, 4) for k, v in label_scores.items()},
-                                        "source_1": src1,
-                                        "source_2": src2,
-                                    }),
-                                ))
-                except Exception as exc:
-                    logger.debug("stage6_nli_pair_error", error=str(exc))
+                contradiction_score = self._nli_contradiction_score(
+                    text1, text2,
+                )
+                if contradiction_score is None:
                     continue
+
+                # Threshold raised from 0.3 → 0.6. With a proper NLI
+                # pipeline, contradiction probability rarely exceeds 0.6
+                # unless there's a genuine factual conflict. 0.3 was
+                # tuned against the broken zero-shot path which produced
+                # ~0.33 uniform scores.
+                if contradiction_score >= 0.6:
+                    result.n_contradictions += 1
+                    result.records.append(CrossAnalysisRecord(
+                        analysis_type="contradiction",
+                        source_entity=f"{src1}:{aid1}",
+                        target_entity=f"{src2}:{aid2}",
+                        relationship=(
+                            f"contradiction (nli_score={contradiction_score:.3f})"
+                        ),
+                        strength=float(contradiction_score),
+                        evidence_articles=[aid1, aid2],
+                        metadata=json.dumps({
+                            "topic_id": tid,
+                            "sbert_similarity": round(sim, 4),
+                            "nli_contradiction": round(contradiction_score, 4),
+                            "source_1": src1,
+                            "source_2": src2,
+                        }),
+                    ))
         else:
             # Fallback: use embedding similarity inversion as a proxy
             # High similarity but from different sources suggests potential contradiction
@@ -2518,19 +2545,52 @@ class Stage6CrossAnalyzer:
     def _load_nli_model(self) -> bool:
         """Attempt to load BART-MNLI for NLI entailment scoring.
 
+        Uses AutoTokenizer + AutoModelForSequenceClassification directly
+        (not the zero-shot-classification pipeline) so we can perform
+        proper pairwise NLI inference: (premise, hypothesis) -> P(contradiction).
+
+        Why not zero-shot-classification: that pipeline treats
+        candidate_labels as the hypothesis and forms "This text is about
+        {label}" strings, which is inappropriate for comparing two real
+        news articles — it produces near-uniform 1/3 scores that trip
+        any low threshold and flag every pair as a contradiction.
+
+        Stores (tokenizer, model, label_order) in self._nli_pipeline.
         Returns True if model loaded successfully, False otherwise.
         """
         if self._nli_pipeline is not None:
             return True
 
         try:
-            from transformers import pipeline as hf_pipeline
-            self._nli_pipeline = hf_pipeline(
-                "zero-shot-classification",
-                model=BART_MNLI_MODEL_NAME,
-                device=-1,  # CPU
+            import torch
+            from transformers import (
+                AutoModelForSequenceClassification,
+                AutoTokenizer,
             )
-            logger.info("stage6_nli_model_loaded")
+            tokenizer = AutoTokenizer.from_pretrained(BART_MNLI_MODEL_NAME)
+            model = AutoModelForSequenceClassification.from_pretrained(
+                BART_MNLI_MODEL_NAME,
+            )
+            model.eval()
+
+            # Resolve label order from model config so we don't hardcode
+            # index-to-name mapping. id2label like {0: "contradiction", ...}.
+            id2label = getattr(model.config, "id2label", {}) or {}
+            label_order = [
+                str(id2label.get(i, f"LABEL_{i}")).lower()
+                for i in range(model.config.num_labels)
+            ]
+
+            self._nli_pipeline = {
+                "tokenizer": tokenizer,
+                "model": model,
+                "label_order": label_order,
+                "torch": torch,
+            }
+            logger.info(
+                "stage6_nli_model_loaded",
+                label_order=label_order,
+            )
             return True
         except Exception as exc:
             logger.info(
@@ -2538,6 +2598,44 @@ class Stage6CrossAnalyzer:
                 reason=str(exc),
             )
             return False
+
+    def _nli_contradiction_score(self, text1: str, text2: str) -> float | None:
+        """Compute P(contradiction) for a (premise, hypothesis) pair.
+
+        Returns None on failure.
+        """
+        if self._nli_pipeline is None:
+            return None
+        try:
+            tok = self._nli_pipeline["tokenizer"]
+            mdl = self._nli_pipeline["model"]
+            label_order = self._nli_pipeline["label_order"]
+            torch = self._nli_pipeline["torch"]
+
+            # Locate the "contradiction" index in the model's label order.
+            contra_idx = -1
+            for i, lbl in enumerate(label_order):
+                if "contradiction" in lbl:
+                    contra_idx = i
+                    break
+            if contra_idx < 0:
+                return None
+
+            inputs = tok(
+                text1,
+                text2,
+                return_tensors="pt",
+                truncation=True,
+                max_length=512,
+                padding=True,
+            )
+            with torch.no_grad():
+                logits = mdl(**inputs).logits
+            probs = torch.softmax(logits, dim=-1)[0]
+            return float(probs[contra_idx].item())
+        except Exception as exc:
+            logger.debug("stage6_nli_pair_error", error=str(exc))
+            return None
 
     # ------------------------------------------------------------------
     # Output writing

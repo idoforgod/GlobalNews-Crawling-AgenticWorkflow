@@ -41,8 +41,10 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TARGET_DATE="${2:-$(date +%Y-%m-%d)}"
 DRY_RUN=false
 
-# Timeout: 4 hours (14400 seconds)
-PIPELINE_TIMEOUT=14400
+# Timeout: 8 hours (28800 seconds) — extended from 4h to accommodate
+# WF5 Newspaper daily edition (ADR-083): 14 editorial desks × Claude CLI
+# adds ~1.5-2h on top of the existing ~4h pipeline.
+PIPELINE_TIMEOUT=28800
 
 # Log paths
 LOG_DIR="${PROJECT_DIR}/data/logs"
@@ -384,7 +386,237 @@ main() {
     # Step 5: Post-run log rotation
     rotate_logs
 
-    # Step 6: Generate daily summary
+    # Step 6: Trigger LLM Wiki ingest (on success only)
+    if [[ ${pipeline_result} -eq 0 ]]; then
+        local wiki_script="/Users/cys/Desktop/CYSjavis/llm-wiki-environmentscanning/scripts/auto-wiki-ingest.sh"
+        if [[ -x "${wiki_script}" ]]; then
+            log_info "Triggering LLM Wiki ingest..."
+            nohup bash "${wiki_script}" >> "${LOG_DIR}/daily/wiki-trigger-$(date +%Y-%m-%d).log" 2>&1 &
+            log_info "LLM Wiki ingest triggered in background (PID: $!)"
+        else
+            log_warn "LLM Wiki ingest script not found or not executable: ${wiki_script}"
+        fi
+    fi
+
+    # Step 6.3: Generate W2/W3 narrative reports via existing agents
+    # (ADR-081). main.py --mode full runs the pure Python pipeline which
+    # bypasses `@analysis-reporter` and `@insight-narrator`. This step wires
+    # them in: parse each agent MD definition, invoke Claude CLI, write
+    # output to the agent-declared path. WARNING-only on failure.
+    if [[ ${pipeline_result} -eq 0 ]]; then
+        local invoker="${PROJECT_DIR}/scripts/reports/invoke_claude_agent.py"
+        if [[ -f "${invoker}" ]]; then
+            log_info "Step 6.3: Generating W2 narrative report..."
+            mkdir -p "${PROJECT_DIR}/workflows/analysis/outputs"
+            local w2_parquet="${PROJECT_DIR}/data/output/${TARGET_DATE}/analysis.parquet"
+            local w2_metrics="${PROJECT_DIR}/workflows/analysis/outputs/w2-metrics-${TARGET_DATE}.json"
+            local w2_report="${PROJECT_DIR}/workflows/analysis/outputs/analysis-report-${TARGET_DATE}.md"
+            local w2_log="${LOG_DIR}/daily/w2-report-${TARGET_DATE}.log"
+
+            if [[ -f "${w2_parquet}" ]]; then
+                "${PYTHON}" "${PROJECT_DIR}/scripts/execution/p1/w2_metrics.py" \
+                    --extract --parquet "${w2_parquet}" --output "${w2_metrics}" \
+                    >> "${w2_log}" 2>&1 \
+                    && "${PYTHON}" "${invoker}" \
+                        --agent analysis-reporter \
+                        --inputs "metrics=${w2_metrics}" \
+                        --output "${w2_report}" \
+                        --project-dir "${PROJECT_DIR}" \
+                        >> "${w2_log}" 2>&1 \
+                    && log_info "W2 report → workflows/analysis/outputs/analysis-report-${TARGET_DATE}.md" \
+                    || log_warn "W2 report generation failed — see ${w2_log}"
+            else
+                log_warn "W2 parquet not found at ${w2_parquet} — skipping W2 report"
+            fi
+
+            # Step 6.4: W3 insight-narrator refinement
+            log_info "Step 6.4: Refining W3 insight report via narrator..."
+            mkdir -p "${PROJECT_DIR}/workflows/master/ingest"
+            # Find latest insight run (weekly/monthly/quarterly)
+            local insight_run_id
+            insight_run_id=$(ls -t "${PROJECT_DIR}/data/insights/" 2>/dev/null \
+                | grep -E "^(weekly|monthly|quarterly)" | head -1 || true)
+            if [[ -n "${insight_run_id}" ]]; then
+                local w3_report="${PROJECT_DIR}/data/insights/${insight_run_id}/synthesis/insight_report.md"
+                local w3_metrics="${PROJECT_DIR}/workflows/master/ingest/w3-metrics-${insight_run_id}.json"
+                local w3_log="${LOG_DIR}/daily/w3-narrator-${TARGET_DATE}.log"
+
+                if [[ -f "${w3_report}" ]]; then
+                    "${PYTHON}" "${PROJECT_DIR}/scripts/execution/p1/w3_metrics.py" \
+                        --extract --report "${w3_report}" --output "${w3_metrics}" \
+                        >> "${w3_log}" 2>&1 \
+                        && "${PYTHON}" "${invoker}" \
+                            --agent insight-narrator \
+                            --inputs "raw_report=${w3_report}" "metrics=${w3_metrics}" \
+                            --output "${w3_report}" \
+                            --project-dir "${PROJECT_DIR}" \
+                            >> "${w3_log}" 2>&1 \
+                        && log_info "W3 narrative refined → data/insights/${insight_run_id}/synthesis/insight_report.md" \
+                        || log_warn "W3 narrator refinement failed — see ${w3_log}"
+                else
+                    log_warn "W3 raw report not found at ${w3_report} — skipping narrator"
+                fi
+            else
+                log_warn "No insight run found under data/insights/ — skipping W3 narrator"
+            fi
+        else
+            log_warn "invoke_claude_agent.py not found — skipping agent-chain reports"
+        fi
+    fi
+
+    # Step 6.45: W4 Master Appendix + DCI Layer Summary (Python, idempotent)
+    # ADR-081. Only runs when the corresponding final report exists.
+    if [[ ${pipeline_result} -eq 0 ]]; then
+        local master_final="${PROJECT_DIR}/reports/final/integrated-report-${TARGET_DATE}.md"
+        if [[ -f "${master_final}" ]]; then
+            log_info "Step 6.45a: W4 Master appendix..."
+            "${PYTHON}" -m src.reports.w4_appendix --date "${TARGET_DATE}" \
+                --project-dir "${PROJECT_DIR}" \
+                >> "${LOG_DIR}/daily/w4-appendix-${TARGET_DATE}.log" 2>&1 \
+                && log_info "W4 appendix appended to integrated-report-${TARGET_DATE}.md" \
+                || log_warn "W4 appendix failed"
+        fi
+
+        # DCI appendix — only if a DCI run was produced today
+        local dci_latest
+        dci_latest=$(ls -t "${PROJECT_DIR}/data/dci/runs/" 2>/dev/null \
+            | grep "${TARGET_DATE}" | head -1 || true)
+        if [[ -n "${dci_latest}" ]]; then
+            log_info "Step 6.45b: DCI layer summary for ${dci_latest}..."
+            "${PYTHON}" -m src.reports.dci_layer_summary --run-id "${dci_latest}" \
+                --project-dir "${PROJECT_DIR}" \
+                >> "${LOG_DIR}/daily/dci-appendix-${TARGET_DATE}.log" 2>&1 \
+                && log_info "DCI appendix appended to ${dci_latest}/final_report.md" \
+                || log_warn "DCI appendix failed"
+        fi
+    fi
+
+    # Step 7: WF5 Personal Newspaper — Daily edition (ADR-083)
+    # Consumes W1-W4 + Public L3 + Chart Interp; writes multi-page HTML
+    # edition to newspaper/daily/{date}/. 14 editorial desks × Claude CLI.
+    # WARNING-only on failure (non-blocking).
+    if [[ ${pipeline_result} -eq 0 ]]; then
+        local np_script="${PROJECT_DIR}/scripts/reports/generate_newspaper_daily.py"
+        local np_log="${LOG_DIR}/daily/newspaper-daily-${TARGET_DATE}.log"
+        if [[ -f "${np_script}" ]]; then
+            log_info "Step 7: Personal Newspaper daily edition..."
+            mkdir -p "${LOG_DIR}/daily"
+            if command -v timeout >/dev/null 2>&1; then
+                timeout 10800 "${PYTHON}" "${np_script}" \
+                    --date "${TARGET_DATE}" --project-dir "${PROJECT_DIR}" \
+                    >> "${np_log}" 2>&1 \
+                    && log_info "Newspaper → newspaper/daily/${TARGET_DATE}/index.html" \
+                    || log_warn "Newspaper daily failed — see ${np_log}"
+            else
+                "${PYTHON}" "${np_script}" \
+                    --date "${TARGET_DATE}" --project-dir "${PROJECT_DIR}" \
+                    >> "${np_log}" 2>&1 \
+                    && log_info "Newspaper daily PASS" \
+                    || log_warn "Newspaper daily failed (non-blocking)"
+            fi
+
+            # Step 7a.5: Single-page merge for dashboard iframe compatibility
+            # (AUDIT-newspaper-display-2026-04-15.md — Option A).
+            # generate_newspaper_daily.py Phase 7b already calls this internally,
+            # but as a safety net we also call it here in case Phase 7b failed
+            # (e.g. import path issue). Best-effort — non-blocking.
+            local sp_script="${PROJECT_DIR}/scripts/reports/build_newspaper_single_page.py"
+            if [[ -f "${sp_script}" ]]; then
+                "${PYTHON}" "${sp_script}" \
+                    --date "${TARGET_DATE}" --project-dir "${PROJECT_DIR}" \
+                    >> "${np_log}" 2>&1 \
+                    && log_info "Single-page merge PASS" \
+                    || log_warn "Single-page merge failed (non-blocking)"
+            fi
+
+            # Step 7b: Weekly edition (only on Sunday, requires ≥4 daily)
+            local dow
+            dow=$(date +%u)  # 1=Mon, 7=Sun
+            if [[ "${dow}" == "7" ]]; then
+                local iso_week
+                iso_week=$(date +%G-W%V)
+                local nw_script="${PROJECT_DIR}/scripts/reports/generate_newspaper_weekly.py"
+                if [[ -f "${nw_script}" ]]; then
+                    log_info "Step 7b: Personal Newspaper weekly edition (${iso_week})..."
+                    "${PYTHON}" "${nw_script}" \
+                        --week "${iso_week}" --project-dir "${PROJECT_DIR}" \
+                        >> "${LOG_DIR}/daily/newspaper-weekly-${TARGET_DATE}.log" 2>&1 \
+                        && log_info "Weekly edition → newspaper/weekly/${iso_week}/" \
+                        || log_warn "Weekly newspaper failed (non-blocking)"
+                fi
+            fi
+        fi
+    fi
+
+    # Step 6.6: Chart Interpretations (ADR-082)
+    # Generate 3-Layer interpretation cards for each dashboard tab
+    # (해석/인사이트/미래통찰). Consumes W2 parquet + Public Narrative
+    # facts_pool + W3 narrator output + M4 Temporal. WARNING-only on fail.
+    if [[ ${pipeline_result} -eq 0 ]]; then
+        local ci_script="${PROJECT_DIR}/scripts/reports/generate_chart_interpretations.py"
+        local ci_log="${LOG_DIR}/daily/chart-interp-${TARGET_DATE}.log"
+        if [[ -f "${ci_script}" ]]; then
+            log_info "Step 6.6: Chart Interpretations (6 tabs)..."
+            if command -v timeout >/dev/null 2>&1; then
+                timeout 900 "${PYTHON}" "${ci_script}" \
+                    --date "${TARGET_DATE}" --project-dir "${PROJECT_DIR}" \
+                    >> "${ci_log}" 2>&1 \
+                    && log_info "Interpretations → data/analysis/${TARGET_DATE}/interpretations.json" \
+                    || log_warn "Chart interpretations failed — see ${ci_log}"
+            else
+                "${PYTHON}" "${ci_script}" \
+                    --date "${TARGET_DATE}" --project-dir "${PROJECT_DIR}" \
+                    >> "${ci_log}" 2>&1 \
+                    && log_info "Interpretations → data/analysis/${TARGET_DATE}/interpretations.json" \
+                    || log_warn "Chart interpretations failed — see ${ci_log}"
+            fi
+
+            # Step 6.6b: Fact Auditor review (optional, WARNING-only)
+            local rv_script="${PROJECT_DIR}/scripts/reports/review_chart_interpretations.py"
+            if [[ -f "${rv_script}" ]] && [[ -f "${PROJECT_DIR}/data/analysis/${TARGET_DATE}/interpretations.json" ]]; then
+                log_info "Step 6.6b: interp-fact-auditor review..."
+                "${PYTHON}" "${rv_script}" \
+                    --date "${TARGET_DATE}" --project-dir "${PROJECT_DIR}" \
+                    >> "${LOG_DIR}/daily/chart-interp-review-${TARGET_DATE}.log" 2>&1 \
+                    && log_info "Interp review complete" \
+                    || log_warn "Interp review failed (non-blocking)"
+            fi
+        else
+            log_warn "generate_chart_interpretations.py not found — skipping Step 6.6"
+        fi
+    fi
+
+    # Step 6.5: Generate Public Narrative 3-layer (on success only)
+    # Produces reports/public/{date}/{interpretation,insight,future}.md
+    # so the dashboard's Run Summary tab displays interpretation-quality
+    # prose immediately after each pipeline run. ADR-080.
+    if [[ ${pipeline_result} -eq 0 ]]; then
+        local pn_script="${PROJECT_DIR}/.claude/hooks/scripts/generate_public_layers.py"
+        local pn_log="${LOG_DIR}/daily/public-layers-${TARGET_DATE}.log"
+        if [[ -f "${pn_script}" ]]; then
+            log_info "Generating Public Narrative 3-layer..."
+            mkdir -p "${LOG_DIR}/daily"
+            # Use system python3 (hook scripts run on 3.14); narrator subprocess
+            # calls `claude` CLI directly. 25-min budget covers 3 layers × retries.
+            if command -v timeout >/dev/null 2>&1; then
+                timeout 1500 python3 "${pn_script}" \
+                    --date "${TARGET_DATE}" --project-dir "${PROJECT_DIR}" \
+                    >> "${pn_log}" 2>&1 \
+                    && log_info "Public Narrative generated → reports/public/${TARGET_DATE}/" \
+                    || log_warn "Public Narrative generation failed — see ${pn_log}"
+            else
+                python3 "${pn_script}" \
+                    --date "${TARGET_DATE}" --project-dir "${PROJECT_DIR}" \
+                    >> "${pn_log}" 2>&1 \
+                    && log_info "Public Narrative generated → reports/public/${TARGET_DATE}/" \
+                    || log_warn "Public Narrative generation failed — see ${pn_log}"
+            fi
+        else
+            log_warn "Public Narrative script not found: ${pn_script}"
+        fi
+    fi
+
+    # Step 7: Generate daily summary
     log_info "============================================"
     if [[ ${pipeline_result} -eq 0 ]]; then
         log_info "GlobalNews Daily Pipeline -- SUCCESS"

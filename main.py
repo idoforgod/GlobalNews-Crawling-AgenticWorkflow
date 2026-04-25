@@ -331,16 +331,30 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
 
 def cmd_full(args: argparse.Namespace) -> int:
-    """Execute the full pipeline: crawl + all 8 analysis stages.
+    """Execute the full pipeline: crawl + all 8 analysis stages + insight.
+
+    Workflow:
+        Phase 1: Crawl         (cmd_crawl)
+        Phase 2: Analyze       (cmd_analyze, all 8 stages, uses rolling window)
+        Phase 3: Insight       (cmd_insight, 30-day window, auto-chained)
+
+    Phase 3 is auto-chained so the Workflow A daily run automatically
+    refreshes the Workflow B big-data insight outputs. Users no longer need
+    to manually run --mode insight. Use --skip-insight to disable Phase 3
+    (e.g., for fast crawl-only validation).
 
     Args:
         args: Parsed command-line arguments.
 
     Returns:
-        Exit code (0 = success, 1 = failure).
+        Exit code (0 = success, 1 = failure). Crawl/analyze failures abort
+        the chain; insight failures are warnings (A still considered OK).
     """
     logger = get_logger("main.full")
-    logger.info("Full pipeline started: date=%s dry_run=%s", args.date, args.dry_run)
+    logger.info(
+        "Full pipeline started: date=%s dry_run=%s skip_insight=%s",
+        args.date, args.dry_run, getattr(args, "skip_insight", False),
+    )
 
     t0 = time.monotonic()
 
@@ -356,6 +370,50 @@ def cmd_full(args: argparse.Namespace) -> int:
     args.all_stages = True
     args.stage = None
     analyze_result = cmd_analyze(args)
+
+    if analyze_result != 0:
+        logger.error("Analysis phase failed, skipping insight pipeline.")
+        del args._skip_metadata
+        _write_run_metadata("full", args.date, analyze_result, time.monotonic() - t0)
+        return analyze_result
+
+    # Phase 3: Insight — auto-chain Workflow B after Workflow A.
+    # This fills the gap that previously required a manual
+    # `--mode insight` invocation. Skip only on dry-run or explicit opt-out.
+    insight_result = 0
+    if args.dry_run:
+        logger.info("Insight pipeline skipped: dry-run mode")
+    elif getattr(args, "skip_insight", False):
+        logger.info("Insight pipeline skipped: --skip-insight flag")
+    else:
+        logger.info(
+            "Phase 3: auto-chaining insight pipeline (window=%d, end_date=%s)",
+            getattr(args, "window", None) or 30, args.date,
+        )
+        # Set defaults if cmd_insight needs them
+        if not hasattr(args, "end_date") or not args.end_date:
+            args.end_date = args.date
+        if not hasattr(args, "window") or not args.window:
+            args.window = 30
+        if not hasattr(args, "module"):
+            args.module = None
+        try:
+            insight_result = cmd_insight(args)
+            if insight_result != 0:
+                logger.warning(
+                    "Insight pipeline returned non-zero (%d); "
+                    "Workflow A still considered successful.",
+                    insight_result,
+                )
+                # Degrade to warning: analysis success is what defines
+                # Workflow A completion. Insight failure does not abort.
+                insight_result = 0
+        except Exception as exc:
+            logger.warning(
+                "Insight pipeline crashed: %s — continuing without insight.",
+                exc,
+            )
+
     del args._skip_metadata
 
     _write_run_metadata("full", args.date, analyze_result, time.monotonic() - t0)
@@ -525,6 +583,109 @@ def cmd_insight(args: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
+def cmd_dci(args: argparse.Namespace) -> int:
+    """Execute the WF4 Phase 4 Deep Content Intelligence (DCI) layer.
+
+    DCI is an internal Phase of WF4 Master Integration — not a new
+    workflow. See research/wf4-dci-design-v0.5.md for the 14-layer
+    architecture (L-1 ... L11) and 93-technique registry.
+
+    Phase 0-B (current): this handler validates that the package
+    imports cleanly and runs the orchestrator in **dry-run** mode when
+    --dry-run is passed. Actual layer implementations land in Phase 1+.
+
+    When invoked without --dry-run in Phase 0-B, the orchestrator
+    refuses to proceed unless constants.DCI_ENABLED is flipped to True.
+    """
+    logger = get_logger("main.dci")
+
+    # Build run_id — user-supplied or deterministic default
+    date_str = (
+        args.date.isoformat() if hasattr(args.date, "isoformat") else str(args.date)
+    )
+    run_id = args.run_id or f"dci-{date_str}-{datetime.utcnow():%H%M}"
+
+    logger.info(
+        "DCI pipeline start: run_id=%s date=%s dry_run=%s",
+        run_id, date_str, args.dry_run,
+    )
+
+    # Import deferred until needed — keeps CLI start-up light when mode != dci
+    from src.dci.orchestrator import (
+        DCIOrchestrator, ArticleCorpus,
+        ensure_layers_registered, registered_layer_count, registered_layer_ids,
+    )
+    from src.config.constants import DCI_ENABLED
+
+    # Trigger layer registration (Phase 0-B: L0/L1/L5/L6 stubs are wired)
+    ensure_layers_registered()
+
+    logger.info(
+        "DCI registered layers: %d (%s)",
+        registered_layer_count(),
+        ", ".join(registered_layer_ids()) or "none — Phase 0-B",
+    )
+
+    if not args.dry_run and not DCI_ENABLED:
+        logger.error(
+            "DCI_ENABLED is False (Phase 0-B default). "
+            "Set constants.DCI_ENABLED=True or pass --dry-run."
+        )
+        return 2
+
+    # Phase 1: load real article corpus from W1 output when available.
+    # In dry-run mode, we still attempt the load so the PoC surfaces
+    # realistic char_coverage metrics; empty corpus is tolerated.
+    from src.dci.corpus_loader import load_article_corpus
+    corpus, stats = load_article_corpus(date_str)
+    logger.info(
+        "DCI corpus loaded: %d articles (lines=%d missing_body=%d malformed=%d)",
+        stats.articles_yielded, stats.lines_total,
+        stats.articles_missing_body, stats.malformed_lines,
+    )
+    if stats.articles_yielded == 0 and not args.dry_run:
+        logger.error(
+            "No articles available for real-run at date=%s. "
+            "Run --mode crawl first or pass --dry-run.",
+            date_str,
+        )
+        return 2
+    orch = DCIOrchestrator(
+        project_dir=str(Path(__file__).resolve().parent),
+        run_id=run_id,
+        dry_run=args.dry_run,
+    )
+    t0 = time.monotonic()
+    result = orch.run(corpus)
+    elapsed = time.monotonic() - t0
+
+    logger.info(
+        "DCI dry-run complete: layers_completed=%d layers_skipped=%d "
+        "sg_decision=%s elapsed=%.3fs",
+        len(result.layers_completed), len(result.layers_skipped),
+        result.sg_verdict.get("decision", "?"), elapsed,
+    )
+
+    # Emit structured summary (for CI smoke + Phase 0-C harness).
+    print()
+    print("=" * 70)
+    print(f"  DCI v0.5 DRY-RUN SUMMARY")
+    print("=" * 70)
+    print(f"  Run id:               {result.run_id}")
+    print(f"  Date:                 {result.date}")
+    print(f"  Articles in:          {result.articles_in}")
+    print(f"  Layers completed:     {len(result.layers_completed)}")
+    print(f"  Layers failed:        {len(result.layers_failed)}")
+    print(f"  Layers skipped:       {len(result.layers_skipped)}")
+    print(f"  SG-Superhuman:        {result.sg_verdict.get('decision', '?')}")
+    print(f"  Elapsed:              {result.elapsed_seconds}s")
+    print("=" * 70)
+
+    # Dry-run always returns 0 when layers ran without exception — the
+    # SG FAIL is *expected* in Phase 0-B (no implementations registered).
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the CLI.
 
@@ -557,11 +718,12 @@ Pipeline: 8 stages, 56 analysis techniques
 
     parser.add_argument(
         "--mode",
-        choices=["crawl", "analyze", "full", "status", "insight"],
+        choices=["crawl", "analyze", "full", "status", "insight", "dci"],
         required=True,
         help="Execution mode: crawl (URL discovery + extraction), "
              "analyze (8-stage NLP pipeline), full (crawl + analyze), "
              "insight (big data insight analytics on accumulated data), "
+             "dci (WF4 Phase 4 Deep Content Intelligence — v0.5), "
              "status (show pipeline status)",
     )
 
@@ -626,6 +788,16 @@ Pipeline: 8 stages, 56 analysis techniques
     )
 
     parser.add_argument(
+        "--skip-insight",
+        action="store_true",
+        default=False,
+        help="Skip auto-chained insight pipeline after --mode full. "
+             "By default, --mode full runs Workflow A (crawl + analyze) then "
+             "auto-chains Workflow B (insight, 30-day window). Use this flag "
+             "to run Workflow A only.",
+    )
+
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
@@ -637,6 +809,14 @@ Pipeline: 8 stages, 56 analysis techniques
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
         help="Console log level (default: INFO).",
+    )
+
+    # WF4-DCI v0.5 — Phase 4 Deep Content Intelligence flags
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Execution run id (for --mode dci). Default: dci-<date>-<hh:mm>",
     )
 
     return parser
@@ -671,6 +851,7 @@ def main() -> int:
         "full": cmd_full,
         "status": cmd_status,
         "insight": cmd_insight,
+        "dci": cmd_dci,
     }
 
     handler = handlers.get(args.mode)

@@ -160,7 +160,10 @@ NER_BATCH_SIZE = 32
 KEYBERT_TOP_N = 10
 
 # Memory management
-MAX_MEMORY_GB = 100.0  # Hard limit — 128GB host, generous budget for full NLP pipeline
+# Hard limit — set conservatively below physical RAM to leave headroom for OS
+# and other processes. Host is 128GB; 100GB leaves ~28GB slack. The 8-stage
+# NLP pipeline typically peaks around 20GB at Stage 3 (article analysis).
+MAX_MEMORY_GB = 100.0
 GC_BETWEEN_STAGES = True
 
 # Pipeline stage timeout defaults (seconds)
@@ -184,6 +187,17 @@ MIN_ARTICLES_FOR_TOPICS = 50
 MIN_ARTICLES_FOR_GRANGER = 100
 MIN_DAYS_FOR_ANALYSIS = 7
 FORECAST_HORIZON_DAYS = 30
+
+# Rolling window configuration for Stage 6 (cross analysis) and Stage 7
+# (signal classification). Both stages previously loaded only today's
+# data/processed/{date}/articles.parquet, which made causal analysis and
+# signal classification impossible on single-day slices. With the rolling
+# window, both stages gather the last N days of articles/topics/analysis
+# from the data/processed and data/analysis directory trees.
+#
+# ROLLING_WINDOW_DAYS = 30 (default) gives one month of history.
+# The CLI flag --rolling-window N overrides this per-run.
+ROLLING_WINDOW_DAYS = 30
 
 # =============================================================================
 # Signal Classification Thresholds
@@ -325,3 +339,104 @@ INSIGHT_MIN_ARTICLES_PER_LANG = 50 # M1: minimum articles per language
 INSIGHT_MIN_ENTITY_MENTIONS = 10   # M3: minimum mentions for trajectory
 INSIGHT_MIN_COUNTRY_PAIR_ARTICLES = 10  # M5: minimum for BRI
 INSIGHT_MIN_STEEPS_E_ARTICLES = 50 # M6: minimum Economic articles
+
+
+# =============================================================================
+# WF4 Deep Content Intelligence (DCI) — v0.5 Final
+# =============================================================================
+# DCI is WF4 Master Integration's Phase 4 internal layer (not a new workflow).
+# Reference: research/wf4-dci-design-v0.5.md — 12 layers, 93 techniques,
+# 3-mode classification (P=Pure Python / H=Hybrid / L=LLM essential).
+
+# Feature flag — DCI is opt-in. Flipped to True at the end of Phase 3
+# after the 14-layer skeleton is wired. Existing WF1→W4 pipelines remain
+# untouched because DCI only runs when ``--mode dci`` is invoked
+# explicitly. Override via env var ``DCI_DISABLED=1`` to turn off.
+import os as _os
+DCI_ENABLED = _os.environ.get("DCI_DISABLED", "").strip() not in ("1", "true", "yes")
+
+# Output directories
+DATA_DCI_DIR = DATA_DIR / "dci"                      # DCI run artifacts
+DATA_DCI_CACHE_DIR = DATA_DCI_DIR / "_cache"         # External knowledge cache
+
+# The 12-layer architecture identifiers (stable, used as SOT keys and path
+# segments). Ordering matters — it is the canonical DAG in which layers
+# run. See research/wf4-dci-design-v0.5.md §1 for layer responsibilities.
+DCI_LAYERS = (
+    "L-1_external",
+    "L0_discourse",
+    "L1_semantic",
+    "L1.5_meaning",
+    "L2_relations",
+    "L3_kg_hypergraph",
+    "L4_cross_document",
+    "L5_psycho_style",
+    "L6_triadic_synthesis",
+    "L7_graph_of_thought",
+    "L8_monte_carlo",
+    "L9_metacognitive",
+    "L10_final_report",
+    "L11_dashboard",
+)
+
+# Total technique count (P + H + L). Locked for SG-Superhuman compliance
+# check: actual registry must declare exactly DCI_TECHNIQUES_TOTAL entries.
+DCI_TECHNIQUES_TOTAL = 93
+DCI_TECHNIQUES_P_MODE = 72   # Pure Python, zero LLM
+DCI_TECHNIQUES_H_MODE = 18   # Hybrid (LLM + 5-iter Python verifier)
+DCI_TECHNIQUES_L_MODE = 3    # LLM essential (narrative creation)
+assert DCI_TECHNIQUES_P_MODE + DCI_TECHNIQUES_H_MODE + DCI_TECHNIQUES_L_MODE == \
+    DCI_TECHNIQUES_TOTAL, "DCI technique mode counts must sum to 93"
+
+# H-mode verification loop budget. When an H-mode technique exhausts this
+# budget, SG-Superhuman fails the whole DCI run — we never silently accept
+# low-confidence output. Game-over preferred over hidden hallucination.
+DCI_HYBRID_MAX_ITERATIONS = 5
+
+# SG-Superhuman thresholds (v0.5 §5, §12). Python-only validators — no
+# LLM self-judgment permitted at the gate layer.
+DCI_SG_CHAR_COVERAGE_MIN = 1.00                 # every body char seen
+DCI_SG_TRIPLE_LENS_COVERAGE_MIN = 3.0           # avg char visited by ≥ 3 lenses
+DCI_SG_LLM_BODY_INJECTION_RATIO_MIN = 1.00      # full body reaches L6
+DCI_SG_NLI_VERIFICATION_PASS_RATE_MIN = 0.95    # Python NLI gate
+DCI_SG_TRIADIC_CONSENSUS_RATE_MIN = 0.60        # 3-lens agreement floor
+DCI_SG_ADVERSARIAL_CRITIC_PASS_MIN = 0.90       # Critic approval rate
+DCI_SG_MULTILINGUAL_COVERAGE_MIN = 0.95         # per-language completion
+
+# L-1 External knowledge sources. Values are env-var names; keys are
+# normalized source identifiers used throughout the DCI package.
+DCI_EXTERNAL_SOURCES = (
+    "wikidata",      # DCI_WIKIDATA_ENDPOINT (default: public SPARQL)
+    "gdelt",         # DCI_GDELT_BQ_PROJECT
+    "semscholar",    # DCI_SEMANTIC_SCHOLAR_API_KEY
+    "markets",       # DCI_FRED_API_KEY, DCI_IMF_API_KEY, DCI_OECD_API_KEY
+    "social",        # DCI_TWITTER_BEARER, DCI_REDDIT_CLIENT, DCI_METACULUS_TOKEN
+)
+
+# TTL for external knowledge cache. 7 days balances freshness against API
+# rate limits. Circuit Breaker fallback uses stale cache when source is
+# unreachable (pipeline proceeds with degraded SG attestation).
+DCI_EXTERNAL_CACHE_TTL_DAYS = 7
+
+# CE4 (bracketed hierarchical evidence marker) prefix. Additive to CE1:
+# CE1 bare form "ev:<16-hex>" is unchanged; CE4 wraps it as
+# [ev:article|segment|char:ev:<16-hex>...] for in-report citations.
+# See `.claude/hooks/scripts/_evidence_lib.py` for generators + parser.
+CE4_MARKER_PREFIX = "[ev:"
+
+# L6 Triadic Ensemble — model assignment per lens (see v0.5 §1 L6).
+# Mapping is deterministic by design; swapping models requires a SOT
+# update and fresh PoC run (Phase 0-C).
+DCI_L6_LENS_MODELS = {
+    "alpha": "claude-opus-4-6",     # objective event reconstruction
+    "beta": "claude-sonnet-4-6",    # ideology / framing analysis
+    "gamma": "claude-haiku-4-5",    # weak-signal / anomaly hunter
+    "delta": "claude-opus-4-6",     # independent adversarial critic
+}
+
+# Monte Carlo scenario simulation breadth (L8). Defaults yield 4^5 = 1024
+# leaves; each leaf receives a narrative surface generated under Python
+# probability constraints. Uncapped by budget per user A1 principle.
+DCI_MC_TREE_DEPTH = 5
+DCI_MC_TREE_BRANCHING = 4
+DCI_MC_LEAVES_TARGET = 1000

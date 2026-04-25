@@ -266,7 +266,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.mt.co.kr/rss/
+      rss_url: https://rss.mt.co.kr/mt_news.xml
       sitemap_url: /sitemap.xml
       rate_limit_seconds: 5
       crawl_delay_mandatory: null
@@ -425,40 +425,39 @@ sources:
       daily_article_estimate: 16
       sections_count: 6
       enabled: true
-  etnews:
-    name: Electronic Times
-    url: https://www.etnews.com
+  aitimes:
+    name: AI Times Korea
+    url: https://www.aitimes.com
     region: kr
     language: ko
     group: D
     crawl:
       primary_method: rss
       fallback_methods:
-      - sitemap
       - dom
-      rss_url: https://www.etnews.com/rss
-      sitemap_url: /sitemap.xml
-      rate_limit_seconds: 5
-      crawl_delay_mandatory: null
-      max_requests_per_hour: 720
-      jitter_seconds: 0
+      rss_url: https://www.aitimes.com/rss/allArticle.xml
+      rate_limit_seconds: 2
+      max_requests_per_hour: 300
+      jitter_seconds: 1
+      lookback_hours: 48
+      sections:
+      - https://www.aitimes.com
     anti_block:
-      ua_tier: 2
+      ua_tier: 1
       default_escalation_tier: 1
-      max_escalation_tier: 5
-      requires_proxy: true
-      proxy_region: kr
-      bot_block_level: MEDIUM
+      max_escalation_tier: 3
+      requires_proxy: false
+      bot_block_level: LOW
     extraction:
       paywall_type: none
       title_only: false
       rendering_required: false
       charset: utf-8
     meta:
-      difficulty_tier: Medium
-      daily_article_estimate: 5
-      sections_count: 10
       enabled: true
+      difficulty_tier: Easy
+      daily_article_estimate: 30
+      sections_count: 1
   huffpost:
     name: HuffPost
     url: https://www.huffpost.com
@@ -601,40 +600,9 @@ sources:
       daily_article_estimate: 17
       sections_count: 10
       enabled: true
-  yomiuri:
-    name: Yomiuri Shimbun
-    url: https://www.yomiuri.co.jp
-    region: jp
-    language: ja
-    group: F
-    crawl:
-      primary_method: rss
-      fallback_methods:
-      - sitemap
-      - dom
-      rss_url: https://www.yomiuri.co.jp/feed/
-      sitemap_url: /sitemap.xml
-      rate_limit_seconds: 10
-      crawl_delay_mandatory: null
-      max_requests_per_hour: 240
-      jitter_seconds: 3
-    anti_block:
-      ua_tier: 3
-      default_escalation_tier: 2
-      max_escalation_tier: 6
-      requires_proxy: true
-      proxy_region: jp
-      bot_block_level: HIGH
-    extraction:
-      paywall_type: soft-metered
-      title_only: false
-      rendering_required: false
-      charset: utf-8
-    meta:
-      difficulty_tier: Hard
-      daily_article_estimate: 122
-      sections_count: 15
-      enabled: true
+  # yomiuri: REMOVED 2026-04-25 — login required for article body; RSS 406; consistently 0 articles.
+  # Japanese coverage maintained by asahi + mainichi (both working well).
+  # Slot replaced by 404media (see group D).
   thehindu:
     name: The Hindu
     url: https://www.thehindu.com
@@ -731,6 +699,7 @@ sources:
       crawl_delay_mandatory: null
       max_requests_per_hour: 1800
       jitter_seconds: 0
+      lookback_hours: 168
     anti_block:
       ua_tier: 1
       default_escalation_tier: 1
@@ -817,9 +786,11 @@ sources:
       difficulty_tier: Easy
       daily_article_estimate: 13
       sections_count: 5
-  stratechery:
-    name: Stratechery
-    url: https://stratechery.com
+  # stratechery: REMOVED 2026-04-25 — hard paywall (subscription required); 0 accessible articles.
+  # Replaced by 404media below (same Group D tech-specialty slot).
+  media_404:
+    name: 404 Media
+    url: https://www.404media.co
     language: en
     group: D
     region: US
@@ -827,29 +798,30 @@ sources:
       primary_method: rss
       fallback_methods:
       - dom
-      rss_url: https://stratechery.com/feed
-      sitemap_url: https://stratechery.com/sitemap.xml
-      rate_limit_seconds: 2
-      max_requests_per_hour: 200
+      rss_url: https://www.404media.co/rss/
+      sitemap_url: https://www.404media.co/sitemap.xml
+      rate_limit_seconds: 1
+      max_requests_per_hour: 360
       jitter_seconds: 0
+      lookback_hours: 72
       sections:
-      - https://stratechery.com
+      - https://www.404media.co
     anti_block:
       ua_tier: 1
       default_escalation_tier: 1
-      max_escalation_tier: 5
+      max_escalation_tier: 3
       requires_proxy: false
-      bot_block_level: HIGH
+      bot_block_level: LOW
     extraction:
-      paywall_type: hard
+      paywall_type: none
       title_only: false
       rendering_required: false
       charset: utf-8
     meta:
       enabled: true
-      difficulty_tier: Hard
-      daily_article_estimate: 5
-      sections_count: 5
+      difficulty_tier: Easy
+      daily_article_estimate: 15
+      sections_count: 1
   wired:
     name: Wired
     url: https://www.wired.com
@@ -894,7 +866,7 @@ sources:
       primary_method: rss
       fallback_methods:
       - dom
-      rss_url: https://www.techmeme.com/feed
+      rss_url: https://www.techmeme.com/index.xml
       sitemap_url: https://www.techmeme.com/sitemap.xml
       rate_limit_seconds: 2
       max_requests_per_hour: 200
@@ -909,13 +881,15 @@ sources:
       bot_block_level: MEDIUM
     extraction:
       paywall_type: none
+      # index.xml RSS points to techmeme.com own story pages (not external paywalled sites).
+      # title_only: false — fetch techmeme story cluster pages for rich multi-source summaries.
       title_only: false
       rendering_required: false
       charset: utf-8
     meta:
       enabled: true
-      difficulty_tier: Medium
-      daily_article_estimate: 7
+      difficulty_tier: Easy
+      daily_article_estimate: 20
       sections_count: 5
   bbc:
     name: BBC News
@@ -928,11 +902,15 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.bbc.com/feed
+      rss_url: https://feeds.bbci.co.uk/news/rss.xml
+      rss_urls:
+      - https://feeds.bbci.co.uk/news/world/rss.xml
+      - https://feeds.bbci.co.uk/news/technology/rss.xml
       sitemap_url: https://www.bbc.com/sitemap.xml
       rate_limit_seconds: 3
       max_requests_per_hour: 120
-      jitter_seconds: 0
+      jitter_seconds: 1
+      lookback_hours: 48
       sections:
       - https://www.bbc.com
     anti_block:
@@ -949,7 +927,7 @@ sources:
     meta:
       enabled: true
       difficulty_tier: Easy
-      daily_article_estimate: 9
+      daily_article_estimate: 60
       sections_count: 5
   theguardian:
     name: The Guardian
@@ -1051,6 +1029,111 @@ sources:
       difficulty_tier: Medium
       daily_article_estimate: 5
       sections_count: 5
+  techcrunch:
+    name: TechCrunch
+    url: https://techcrunch.com
+    language: en
+    group: E
+    region: US
+    crawl:
+      primary_method: rss
+      fallback_methods:
+      - sitemap
+      - dom
+      rss_url: https://techcrunch.com/feed/
+      sitemap_url: https://techcrunch.com/news-sitemap.xml
+      rate_limit_seconds: 2
+      max_requests_per_hour: 300
+      jitter_seconds: 1
+      lookback_hours: 48
+      sections:
+      - https://techcrunch.com
+    anti_block:
+      ua_tier: 1
+      default_escalation_tier: 1
+      max_escalation_tier: 3
+      requires_proxy: false
+      bot_block_level: LOW
+    extraction:
+      paywall_type: none
+      title_only: false
+      rendering_required: false
+      charset: utf-8
+    meta:
+      enabled: true
+      difficulty_tier: Easy
+      daily_article_estimate: 20
+      sections_count: 1
+  theverge:
+    name: The Verge
+    url: https://www.theverge.com
+    language: en
+    group: E
+    region: US
+    crawl:
+      primary_method: rss
+      fallback_methods:
+      - sitemap
+      - dom
+      rss_url: https://www.theverge.com/rss/index.xml
+      sitemap_url: https://www.theverge.com/sitemap.xml
+      rate_limit_seconds: 2
+      max_requests_per_hour: 300
+      jitter_seconds: 1
+      lookback_hours: 48
+      sections:
+      - https://www.theverge.com
+    anti_block:
+      ua_tier: 2
+      default_escalation_tier: 1
+      max_escalation_tier: 4
+      requires_proxy: false
+      bot_block_level: MEDIUM
+    extraction:
+      paywall_type: none
+      title_only: false
+      rendering_required: false
+      charset: utf-8
+    meta:
+      enabled: true
+      difficulty_tier: Easy
+      daily_article_estimate: 15
+      sections_count: 1
+  arstechnica:
+    name: Ars Technica
+    url: https://arstechnica.com
+    language: en
+    group: E
+    region: US
+    crawl:
+      primary_method: rss
+      fallback_methods:
+      - sitemap
+      - dom
+      rss_url: https://feeds.arstechnica.com/arstechnica/index
+      sitemap_url: https://arstechnica.com/sitemap.xml
+      rate_limit_seconds: 2
+      max_requests_per_hour: 300
+      jitter_seconds: 1
+      lookback_hours: 48
+      sections:
+      - https://arstechnica.com
+    anti_block:
+      ua_tier: 1
+      default_escalation_tier: 1
+      max_escalation_tier: 3
+      requires_proxy: false
+      bot_block_level: LOW
+    extraction:
+      paywall_type: none
+      title_only: false
+      rendering_required: false
+      charset: utf-8
+    meta:
+      enabled: true
+      difficulty_tier: Easy
+      daily_article_estimate: 20
+      sections_count: 1
   mainichi:
     name: Mainichi Shimbun
     url: https://mainichi.jp/english/
@@ -1304,7 +1387,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://en.tempo.co/feed
+      rss_url: https://rss.tempo.co/en
       sitemap_url: https://en.tempo.co/sitemap.xml
       rate_limit_seconds: 2
       per_site_timeout: 1200
@@ -1407,7 +1490,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://e.vnexpress.net/feed
+      rss_url: https://e.vnexpress.net/rss/news.rss
       sitemap_url: https://e.vnexpress.net/sitemap.xml
       rate_limit_seconds: 2
       per_site_timeout: 1200
@@ -1468,19 +1551,21 @@ sources:
   euronews:
     name: Euronews
     url: https://www.euronews.com
+    # RE-ENABLED 2026-04-25: root cause was wrong rss_url (/feed→404) and sitemap pointing to lettered-pages (tag loop).
+    # Fix: rss_url→/rss (works, 50 articles), sitemap_url→articles.xml only (skips lettered-pages entirely).
     language: en
     group: G
     region: EU
     crawl:
       primary_method: rss
       fallback_methods:
-      - sitemap
-      - dom
-      rss_url: https://www.euronews.com/feed
-      sitemap_url: https://www.euronews.com/sitemap.xml
+      - sitemap  # only articles.xml — lettered-pages.xml is excluded
+      rss_url: https://www.euronews.com/rss  # was /feed (404); /rss returns 50 articles correctly
+      sitemap_url: http://www.euronews.com/sitemap/articles.xml  # articles only; lettered-pages.xml is NOT referenced here
       rate_limit_seconds: 3
       max_requests_per_hour: 120
       jitter_seconds: 0
+      lookback_hours: 48
       sections:
       - https://www.euronews.com
     anti_block:
@@ -1497,7 +1582,7 @@ sources:
     meta:
       enabled: true
       difficulty_tier: Easy
-      daily_article_estimate: 5
+      daily_article_estimate: 50
       sections_count: 5
   spiegel:
     name: Der Spiegel
@@ -1646,7 +1731,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://elpais.com/feed
+      rss_url: https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada
       sitemap_url: https://elpais.com/sitemap.xml
       rate_limit_seconds: 3
       max_requests_per_hour: 120
@@ -1714,7 +1799,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.abc.es/feed
+      rss_url: https://www.abc.es/rss/feeds/abcPortada.xml
       sitemap_url: https://www.abc.es/sitemap.xml
       rate_limit_seconds: 3
       max_requests_per_hour: 120
@@ -1770,40 +1855,6 @@ sources:
       enabled: true
       difficulty_tier: Medium
       daily_article_estimate: 35
-      sections_count: 5
-  france24:
-    name: France 24
-    url: https://www.france24.com
-    language: fr
-    group: G
-    region: FR
-    crawl:
-      primary_method: rss
-      fallback_methods:
-      - sitemap
-      - dom
-      rss_url: https://www.france24.com/feed
-      sitemap_url: https://www.france24.com/sitemap.xml
-      rate_limit_seconds: 3
-      max_requests_per_hour: 120
-      jitter_seconds: 0
-      sections:
-      - https://www.france24.com
-    anti_block:
-      ua_tier: 2
-      default_escalation_tier: 1
-      max_escalation_tier: 5
-      requires_proxy: false
-      bot_block_level: MEDIUM
-    extraction:
-      paywall_type: none
-      title_only: false
-      rendering_required: false
-      charset: utf-8
-    meta:
-      enabled: true
-      difficulty_tier: Easy
-      daily_article_estimate: 15
       sections_count: 5
   pap:
     name: Polish Press Agency
@@ -1883,7 +1934,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.aftonbladet.se/feed
+      rss_url: https://rss.aftonbladet.se/rss2/small/pages/sections/nyheter/
       sitemap_url: https://www.aftonbladet.se/sitemap.xml
       rate_limit_seconds: 3
       per_site_timeout: 1200
@@ -1958,6 +2009,7 @@ sources:
       rate_limit_seconds: 2
       max_requests_per_hour: 200
       jitter_seconds: 0
+      lookback_hours: 168
       sections:
       - https://yle.fi/news
     anti_block:
@@ -1992,6 +2044,7 @@ sources:
       rate_limit_seconds: 2
       max_requests_per_hour: 200
       jitter_seconds: 0
+      lookback_hours: 168
       sections:
       - https://allafrica.com
     anti_block:
@@ -2055,7 +2108,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.clarin.com/feed
+      rss_url: https://www.clarin.com/rss/lo-ultimo/
       sitemap_url: https://www.clarin.com/sitemap.xml
       rate_limit_seconds: 3
       per_site_timeout: 1200
@@ -2090,7 +2143,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.lanacion.com.ar/feed
+      rss_url: https://www.lanacion.com.ar/arc/outboundfeeds/rss/?outputType=xml
       sitemap_url: https://www.lanacion.com.ar/sitemap.xml
       rate_limit_seconds: 3
       max_requests_per_hour: 120
@@ -2124,7 +2177,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.folha.uol.com.br/feed
+      rss_url: https://feeds.folha.uol.com.br/emcimadahora/rss091.xml
       sitemap_url: https://www.folha.uol.com.br/sitemap.xml
       rate_limit_seconds: 3
       per_site_timeout: 1200
@@ -2227,7 +2280,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.eltiempo.com/feed
+      rss_url: https://www.eltiempo.com/rss/colombia.xml
       sitemap_url: https://www.eltiempo.com/sitemap.xml
       rate_limit_seconds: 3
       max_requests_per_hour: 120
@@ -2463,7 +2516,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://www.jpost.com/feed
+      rss_url: https://rss.jpost.com/rss/rssfeedsfrontpage.aspx
       sitemap_url: https://www.jpost.com/sitemap.xml
       rate_limit_seconds: 3
       max_requests_per_hour: 120
@@ -2486,39 +2539,6 @@ sources:
       difficulty_tier: Medium
       daily_article_estimate: 12
       sections_count: 5
-  jordantimes:
-    name: Jordan Times
-    url: http://jordantimes.com
-    language: en
-    group: G
-    region: JO
-    crawl:
-      primary_method: rss
-      fallback_methods:
-      - dom
-      rss_url: http://jordantimes.com/feed
-      sitemap_url: http://jordantimes.com/sitemap.xml
-      rate_limit_seconds: 2
-      max_requests_per_hour: 200
-      jitter_seconds: 0
-      sections:
-      - http://jordantimes.com
-    anti_block:
-      ua_tier: 1
-      default_escalation_tier: 1
-      max_escalation_tier: 5
-      requires_proxy: false
-      bot_block_level: MEDIUM
-    extraction:
-      paywall_type: none
-      title_only: false
-      rendering_required: false
-      charset: utf-8
-    meta:
-      enabled: true
-      difficulty_tier: Medium
-      daily_article_estimate: 5
-      sections_count: 5
   france24_fr:
     name: France 24 French
     url: https://www.france24.com/fr
@@ -2531,6 +2551,10 @@ sources:
       - sitemap
       - dom
       rss_url: https://www.france24.com/fr/france/rss
+      rss_urls:
+      - https://www.france24.com/fr/monde/rss
+      - https://www.france24.com/fr/europe/rss
+      - https://www.france24.com/fr/asie-pacifique/rss
       rss_sections:
       - url: https://www.france24.com/fr/éco-tech/rss
         section: economie_tech
@@ -2684,6 +2708,7 @@ sources:
       crawl_delay_mandatory: null
       max_requests_per_hour: 720
       jitter_seconds: 0
+      lookback_hours: 168
     anti_block:
       ua_tier: 1
       default_escalation_tier: 1
@@ -3229,6 +3254,7 @@ sources:
   cbs_moneywatch:
     name: CBS News MoneyWatch
     url: https://www.cbsnews.com/moneywatch/
+    enabled: false  # DISABLED: articles served from cbsnews.com/news/ domain, already fully covered by cbsnews site → dedup collision causes articles=0 every run
     region: us
     language: en
     group: E
@@ -3309,6 +3335,7 @@ sources:
       crawl_delay_mandatory: null
       max_requests_per_hour: 720
       jitter_seconds: 0
+      lookback_hours: 168
     anti_block:
       ua_tier: 1
       default_escalation_tier: 1
@@ -3345,6 +3372,7 @@ sources:
       crawl_delay_mandatory: null
       max_requests_per_hour: 360
       jitter_seconds: 3
+      lookback_hours: 168
     anti_block:
       ua_tier: 1
       default_escalation_tier: 1
@@ -3440,7 +3468,7 @@ sources:
       fallback_methods:
       - sitemap
       - dom
-      rss_url: https://sofiaglobe.com/category/bulgaria/feed/
+      rss_url: https://sofiaglobe.com/feed/
       sitemap_url: /sitemap.xml
       rate_limit_seconds: 10
       crawl_delay_mandatory: null
@@ -3476,12 +3504,12 @@ sources:
       - dom
       rss_url: https://www.independent.co.uk/rss
       sitemap_url: /sitemap.xml
-      rate_limit_seconds: 5
+      rate_limit_seconds: 10  # was 5; slower rate reduces 405 bursts that triggered CB
       crawl_delay_mandatory: null
-      max_requests_per_hour: 720
-      jitter_seconds: 0
+      max_requests_per_hour: 360  # halved to be gentler
+      jitter_seconds: 3  # add human-like jitter
     anti_block:
-      ua_tier: 2
+      ua_tier: 3  # upgraded from 2→3 (full desktop Chrome UA)
       default_escalation_tier: 2
       max_escalation_tier: 5
       requires_proxy: false
@@ -3565,29 +3593,28 @@ sources:
       daily_article_estimate: 5
       sections_count: 1
       enabled: true
-  cgtn:
-    name: CGTN
-    url: https://www.cgtn.com
+  globaltimes:
+    name: Global Times
+    url: https://www.globaltimes.cn
     region: cn
     language: en
     group: F
     crawl:
       primary_method: rss
       fallback_methods:
-      - sitemap
       - dom
-      rss_url: https://www.cgtn.com/subscribe/rss/section/world.xml
-      sitemap_url: /sitemap.xml
-      rate_limit_seconds: 5
-      crawl_delay_mandatory: null
-      max_requests_per_hour: 720
-      jitter_seconds: 0
+      rss_url: https://www.globaltimes.cn/rss/outbrain.xml
+      rate_limit_seconds: 3
+      max_requests_per_hour: 200
+      jitter_seconds: 1
+      lookback_hours: 48
+      sections:
+      - https://www.globaltimes.cn
     anti_block:
       ua_tier: 1
       default_escalation_tier: 1
       max_escalation_tier: 3
       requires_proxy: false
-      proxy_region: null
       bot_block_level: LOW
     extraction:
       paywall_type: none
@@ -3595,10 +3622,10 @@ sources:
       rendering_required: false
       charset: utf-8
     meta:
-      difficulty_tier: Easy
-      daily_article_estimate: 80
-      sections_count: 1
       enabled: true
+      difficulty_tier: Easy
+      daily_article_estimate: 30
+      sections_count: 1
   trtworld:
     name: TRT World
     url: https://www.trtworld.com
@@ -3752,6 +3779,7 @@ sources:
       crawl_delay_mandatory: null
       max_requests_per_hour: 360
       jitter_seconds: 3
+      lookback_hours: 168
       rss_full_text: true
     anti_block:
       ua_tier: 1
@@ -3787,6 +3815,7 @@ sources:
       crawl_delay_mandatory: null
       max_requests_per_hour: 360
       jitter_seconds: 3
+      lookback_hours: 168
       rss_full_text: true
     anti_block:
       ua_tier: 1

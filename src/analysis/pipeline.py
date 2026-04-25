@@ -55,6 +55,7 @@ from src.config.constants import (
     EMBEDDINGS_PARQUET_PATH,
     NER_PARQUET_PATH,
     NETWORKS_PARQUET_PATH,
+    ROLLING_WINDOW_DAYS,
     SIGNALS_PARQUET_PATH,
     SQLITE_INDEX_PATH,
     TFIDF_PARQUET_PATH,
@@ -313,6 +314,7 @@ class AnalysisPipeline:
         date: str | None = None,
         memory_abort_gb: float = MEMORY_ABORT_THRESHOLD_GB,
         memory_warning_gb: float = MEMORY_WARNING_THRESHOLD_GB,
+        rolling_window_days: int = ROLLING_WINDOW_DAYS,
     ) -> None:
         self._data_dir = Path(data_dir) if data_dir else DATA_DIR
         self._date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -320,6 +322,11 @@ class AnalysisPipeline:
             abort_threshold_gb=memory_abort_gb,
             warning_threshold_gb=memory_warning_gb,
         )
+
+        # Rolling window configuration for Stage 6/7. Default 30 days.
+        # When 0 or negative, rolling window is disabled and stages 6/7
+        # fall back to single-day per-date directories (legacy behavior).
+        self._rolling_window_days = rolling_window_days
 
         # Resolve key directories from data_dir — date-partitioned
         # Each daily run writes to its own subdirectory so results accumulate
@@ -329,6 +336,11 @@ class AnalysisPipeline:
         self._features_dir = self._data_dir / "features" / self._date
         self._analysis_dir = self._data_dir / "analysis" / self._date
         self._output_dir = self._data_dir / "output" / self._date
+
+        # Rolling-window workspace for Stage 6/7 (created on-demand).
+        self._rolling_dir = (
+            self._analysis_dir / f"_rolling_{self._rolling_window_days}d"
+        )
 
     # -----------------------------------------------------------------
     # Public API
@@ -792,8 +804,18 @@ class AnalysisPipeline:
         if dtm_path.exists():
             output_paths.append(str(dtm_path))
 
+        # Report number of articles that received topic assignments so the
+        # metric reflects actual Stage 4 throughput rather than zero.
+        topic_rows = 0
+        if topics_path.exists():
+            try:
+                import pyarrow.parquet as pq
+                topic_rows = pq.ParquetFile(topics_path).metadata.num_rows
+            except Exception:
+                topic_rows = 0
+
         return {
-            "article_count": 0,  # Aggregation does not produce per-article counts
+            "article_count": topic_rows,
             "output_paths": output_paths,
         }
 
@@ -833,8 +855,128 @@ class AnalysisPipeline:
             "output_paths": [str(output_path)] if output_path.exists() else [],
         }
 
+    def _build_rolling_window(self) -> dict[str, Path] | None:
+        """Materialize the last N days of parquet inputs into a single
+        per-kind file under ``data/analysis/{date}/_rolling_{N}d/``.
+
+        This is the core of the Workflow A rolling-window refactor: Stage
+        6 (cross analysis) and Stage 7 (signal classification) previously
+        loaded only today's ``data/processed/{date}/articles.parquet``,
+        which made causal analysis (Granger/PCMCI) and signal classification
+        (L1-L5 data_span_days gates) impossible on single-day slices.
+
+        By concatenating the last N days of parquet files into a single
+        file per kind, the downstream analyzer code needs no changes — it
+        just sees a fatter parquet with ~30 days of history.
+
+        Returns:
+            Dict with keys matching Stage 6/7 inputs (articles/topics/
+            analysis/networks/embeddings/timeseries) mapping to the
+            concatenated parquet paths, or None if rolling window is
+            disabled or there are no historical days available.
+        """
+        if self._rolling_window_days <= 0:
+            return None
+
+        import datetime as _dt
+        try:
+            end = _dt.datetime.strptime(self._date, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+        # Enumerate the last N days ending at self._date (inclusive).
+        day_strs: list[str] = []
+        for i in range(self._rolling_window_days):
+            d = end - _dt.timedelta(days=i)
+            day_strs.append(d.strftime("%Y-%m-%d"))
+        day_strs.sort()  # chronological
+
+        # For each input kind, collect the existing per-day files.
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        # (input_kind, source_dir_root, filename)
+        kinds = [
+            ("articles",     self._data_dir / "processed", "articles.parquet"),
+            ("topics",       self._data_dir / "analysis",  "topics.parquet"),
+            ("analysis",     self._data_dir / "analysis",  "article_analysis.parquet"),
+            ("networks",     self._data_dir / "analysis",  "networks.parquet"),
+            ("embeddings",   self._data_dir / "features",  "embeddings.parquet"),
+            ("timeseries",   self._data_dir / "analysis",  "timeseries.parquet"),
+        ]
+
+        self._rolling_dir.mkdir(parents=True, exist_ok=True)
+        result: dict[str, Path] = {}
+        summary: dict[str, int] = {}
+
+        for kind, root, fname in kinds:
+            tables: list[pa.Table] = []
+            days_found: list[str] = []
+            for day in day_strs:
+                p = root / day / fname
+                if not p.exists():
+                    continue
+                try:
+                    tables.append(pq.read_table(str(p)))
+                    days_found.append(day)
+                except Exception as exc:
+                    logger.warning(
+                        "rolling_window_skip_file",
+                        kind=kind, path=str(p), error=str(exc),
+                    )
+            if not tables:
+                summary[kind] = 0
+                continue
+
+            # Schema reconciliation: promote to unified schema
+            # (pyarrow will fail if schemas mismatch; use promote_options='default'
+            # when available, otherwise fall back to permissive concat).
+            try:
+                merged = pa.concat_tables(tables, promote_options="default")
+            except TypeError:
+                # pyarrow < 14: older signature
+                try:
+                    merged = pa.concat_tables(tables, promote=True)
+                except Exception as exc:
+                    logger.warning(
+                        "rolling_window_concat_fallback",
+                        kind=kind, error=str(exc), n_files=len(tables),
+                    )
+                    # Last resort: use the most recent single file
+                    merged = tables[-1]
+            except Exception as exc:
+                logger.warning(
+                    "rolling_window_concat_failed",
+                    kind=kind, error=str(exc), n_files=len(tables),
+                )
+                merged = tables[-1]
+
+            out_path = self._rolling_dir / fname
+            pq.write_table(merged, str(out_path), compression="zstd")
+            result[kind] = out_path
+            summary[kind] = merged.num_rows
+
+        logger.info(
+            "rolling_window_built",
+            window_days=self._rolling_window_days,
+            end_date=self._date,
+            days_covered=len([d for d in day_strs
+                              if (self._data_dir / "processed" / d /
+                                  "articles.parquet").exists()]),
+            **{f"{k}_rows": v for k, v in summary.items()},
+        )
+
+        if not result:
+            return None
+        return result
+
     def _run_stage6(self, input_path: str | Path | None = None) -> dict[str, Any]:
         """Run Stage 6: Cross Analysis (Granger, PCMCI, networks, cross-lingual).
+
+        Uses a rolling N-day window (default 30) instead of single-day inputs
+        so that causal analysis and cross-source contradiction detection have
+        enough history. Falls back to single-day inputs only if rolling window
+        is disabled or no historical data is available.
 
         Args:
             input_path: Not used for Stage 6.
@@ -844,17 +986,40 @@ class AnalysisPipeline:
         """
         from src.analysis.stage6_cross_analysis import run_stage6
 
-        logger.info(
-            "stage6_run using default paths from constants",
-        )
+        rolling = self._build_rolling_window()
+        if rolling is not None:
+            logger.info(
+                "stage6_run mode=rolling window_days=%d",
+                self._rolling_window_days,
+            )
+            articles_path = rolling.get("articles",
+                                        self._processed_dir / "articles.parquet")
+            topics_path = rolling.get("topics",
+                                      self._analysis_dir / "topics.parquet")
+            analysis_path = rolling.get("analysis",
+                                        self._analysis_dir / "article_analysis.parquet")
+            networks_path = rolling.get("networks",
+                                        self._analysis_dir / "networks.parquet")
+            embeddings_path = rolling.get("embeddings",
+                                          self._features_dir / "embeddings.parquet")
+            timeseries_path = rolling.get("timeseries",
+                                          self._analysis_dir / "timeseries.parquet")
+        else:
+            logger.info("stage6_run mode=single_day")
+            articles_path = self._processed_dir / "articles.parquet"
+            topics_path = self._analysis_dir / "topics.parquet"
+            analysis_path = self._analysis_dir / "article_analysis.parquet"
+            networks_path = self._analysis_dir / "networks.parquet"
+            embeddings_path = self._features_dir / "embeddings.parquet"
+            timeseries_path = self._analysis_dir / "timeseries.parquet"
 
         output = run_stage6(
-            timeseries_path=self._analysis_dir / "timeseries.parquet",
-            topics_path=self._analysis_dir / "topics.parquet",
-            analysis_path=self._analysis_dir / "article_analysis.parquet",
-            networks_path=self._analysis_dir / "networks.parquet",
-            embeddings_path=self._features_dir / "embeddings.parquet",
-            articles_path=self._processed_dir / "articles.parquet",
+            timeseries_path=timeseries_path,
+            topics_path=topics_path,
+            analysis_path=analysis_path,
+            networks_path=networks_path,
+            embeddings_path=embeddings_path,
+            articles_path=articles_path,
             output_dir=self._analysis_dir,
             cleanup_after=True,
         )
@@ -868,6 +1033,10 @@ class AnalysisPipeline:
     def _run_stage7(self, input_path: str | Path | None = None) -> dict[str, Any]:
         """Run Stage 7: Signal Classification (5-Layer hierarchy + novelty).
 
+        Uses the rolling window built by Stage 6 so the 5-Layer classifier
+        sees multi-day time series (required for L2/L3/L4 data_span_days
+        gates) instead of collapsing to 0 signals on single-day slices.
+
         Args:
             input_path: Not used for Stage 7.
 
@@ -876,16 +1045,53 @@ class AnalysisPipeline:
         """
         from src.analysis.stage7_signals import Stage7SignalClassifier
 
+        # Reuse the rolling window directory from Stage 6 if it was built.
+        # The rolling dir has the same filenames (topics.parquet,
+        # article_analysis.parquet, networks.parquet, timeseries.parquet)
+        # as the per-date analysis_dir, so Stage 7 can just point at it.
+        analysis_dir_for_s7 = self._analysis_dir
+        features_dir_for_s7 = self._features_dir
+
+        if (self._rolling_window_days > 0 and self._rolling_dir.exists()
+                and (self._rolling_dir / "topics.parquet").exists()):
+            analysis_dir_for_s7 = self._rolling_dir
+            # Use rolling embeddings if present
+            if (self._rolling_dir / "embeddings.parquet").exists():
+                features_dir_for_s7 = self._rolling_dir
+
+            # Stage 7 reads cross_analysis.parquet from its analysis_dir,
+            # but Stage 6 writes it to self._analysis_dir (not the rolling
+            # subdir). Symlink it into the rolling dir so Stage 7 finds it.
+            cross_path_src = self._analysis_dir / "cross_analysis.parquet"
+            cross_path_dst = self._rolling_dir / "cross_analysis.parquet"
+            if cross_path_src.exists() and not cross_path_dst.exists():
+                try:
+                    cross_path_dst.symlink_to(cross_path_src)
+                except OSError:
+                    # Fall back to a copy if symlinks are restricted.
+                    import shutil
+                    shutil.copy2(cross_path_src, cross_path_dst)
+
+            logger.info(
+                "stage7_run mode=rolling dir=%s",
+                analysis_dir_for_s7,
+            )
+        else:
+            logger.info(
+                "stage7_run mode=single_day analysis_dir=%s features_dir=%s",
+                self._analysis_dir, self._features_dir,
+            )
+
         logger.info(
-            "stage7_run analysis_dir=%s features_dir=%s output_dir=%s",
-            self._analysis_dir, self._features_dir, self._output_dir,
+            "stage7_run output_dir=%s",
+            self._output_dir,
         )
 
         classifier = Stage7SignalClassifier()
         try:
             output = classifier.run(
-                analysis_dir=self._analysis_dir,
-                features_dir=self._features_dir,
+                analysis_dir=analysis_dir_for_s7,
+                features_dir=features_dir_for_s7,
                 output_dir=self._output_dir,
             )
         finally:

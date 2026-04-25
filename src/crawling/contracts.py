@@ -12,9 +12,30 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+
+# Phase 0.4: evidence_id derivation for CE1 Evidence Chain.
+# _evidence_lib lives in .claude/hooks/scripts/ — import via sys.path insertion.
+# The import is guarded: if unavailable (unusual), evidence_id is silently None
+# rather than failing the crawler. Downstream validate_evidence_chain.py will
+# catch missing IDs at the W1→W2 boundary gate.
+_CONTRACTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(_CONTRACTS_DIR))
+_HOOKS_SCRIPTS_DIR = os.path.join(
+    _PROJECT_ROOT, ".claude", "hooks", "scripts"
+)
+if _HOOKS_SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_SCRIPTS_DIR)
+
+try:
+    from _evidence_lib import generate_evidence_id as _gen_evidence_id, EvidenceIDError
+except ImportError:
+    _gen_evidence_id = None  # type: ignore
+    EvidenceIDError = Exception  # type: ignore
 
 
 @dataclass(frozen=True)
@@ -57,8 +78,28 @@ class RawArticle:
     crawl_method: str = "rss"
     is_paywall_truncated: bool = False
 
+    def compute_evidence_id(self) -> str | None:
+        """Derive the Evidence Chain ID from immutable canonical fields.
+
+        CE1 (stable 2-field formula): SHA256(normalized_url + "|" + published_at_iso).
+        Returns None when published_at is absent (cannot produce a stable ID
+        without a timestamp). Downstream validate_evidence_chain.py enforces
+        presence at the W1→W2 boundary.
+        """
+        if self.published_at is None or _gen_evidence_id is None:
+            return None
+        try:
+            return _gen_evidence_id(self.url, self.published_at.isoformat())
+        except (EvidenceIDError, ValueError):
+            return None
+
     def to_jsonl_dict(self) -> dict[str, Any]:
         """Serialize for JSONL output. Timestamps as ISO 8601 strings.
+
+        Phase 0.4: includes `evidence_id` for G1 Evidence Chain propagation.
+        The field is None for articles without published_at — downstream P1
+        validation (scripts/execution/p1/evidence_chain.py --check generate)
+        enforces presence at the W1 output boundary.
 
         Returns:
             Dictionary suitable for json.dumps serialization.
@@ -78,6 +119,7 @@ class RawArticle:
             "crawl_tier": self.crawl_tier,
             "crawl_method": self.crawl_method,
             "is_paywall_truncated": self.is_paywall_truncated,
+            "evidence_id": self.compute_evidence_id(),
         }
 
     def to_jsonl_line(self) -> str:

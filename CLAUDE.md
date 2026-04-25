@@ -137,7 +137,7 @@ GlobalNews-Crawling-AgenticWorkflow/
 
 | Hook 이벤트 | 스크립트 | 동작 |
 |------------|---------|------|
-| **Setup** (`--init`) | `setup_init.py` | 세션 시작 전 인프라 건강 검증 (Python 버전, 스크립트 구문(21개), 디렉터리, PyYAML, SOT 쓰기 패턴 검증, 런타임 디렉터리 자동 생성(6개), 도메인 venv P1 검증(ENV1a-ENV1d)) |
+| **Setup** (`--init`) | `setup_init.py` | 세션 시작 전 인프라 건강 검증 (Python 버전, 스크립트 구문(26개 — Phase 0.1/0.2 확장), 디렉터리, PyYAML, SOT 쓰기 패턴 검증, 런타임 디렉터리 자동 생성(6개), 도메인 venv P1 검증(ENV1a-ENV1d)) |
 | **Setup** (`--maintenance`) | `setup_maintenance.py` | 주기적 건강 검진 (stale archives, knowledge-index 무결성, work_log 크기, doc-code 동기화 검증(DC-1 NEVER DO 재시도 한도, DC-2 D-7 Risk 상수, DC-3 D-7 ULW 패턴, DC-4 D-7 재시도 한도 상수, DC-5 D-7 ENABLED_DEFAULT 동기화)) |
 | **PreToolUse** (Bash) | `block_destructive_commands.py` | 위험 명령·시크릿 소스 명령·파괴적 SQL 실행 전 차단 (git push --force, cat .env, DROP TABLE 등). exit code 2로 차단 + stderr 피드백으로 Claude 자기 수정 |
 | **PreToolUse** (Edit\|Write) | `block_test_file_edit.py` | TDD 모드(`.tdd-guard` 존재) 시 테스트 파일 수정 차단. Tier 1(디렉터리) + Tier 2(파일명) 2계층 탐지. exit code 2 + stderr 피드백으로 구현 코드 수정 유도 |
@@ -272,6 +272,11 @@ GlobalNews-Crawling-AgenticWorkflow/
 | "autopilot으로 시작", "자동 모드로 시작" | "start in autopilot", "auto mode" | `/start` + autopilot 활성화 |
 | "통찰 분석", "인사이트 분석", "빅데이터 통찰" | "insight analysis", "run insights", "big data insights" | `/run` (mode=insight) |
 | "통찰 결과", "인사이트 결과" | "insight results", "show insights" | `data/insights/` 최신 결과 읽기 |
+| "DCI 실행", "심층 분석 시작", "딥 콘텐츠 분석" | "run DCI", "start deep content", "deep content intelligence" | `/run-dci-only` |
+| "DCI 재실행", "심층 분석 재개", "DCI 이어서" | "resume DCI", "retry DCI" | `/run-dci-only` (auto-resume via checkpoints) |
+| "DCI 결과", "심층 분석 결과" | "DCI results", "show deep report" | `data/dci/runs/{latest}/final_report.md` 읽기 |
+| "일반인 해석 만들어줘", "공개 보고서 생성", "쉬운 해석" | "generate public narrative", "public layers", "plain explanation" | `/generate-public-layers --date {date}` |
+| "해석/통찰/미래 다시 생성" | "regenerate L2", etc. | `/generate-public-layers --only L2 --date {date}` |
 | "상태 확인", "결과 확인", "현황" | "check status", "show results" | `.venv/bin/python main.py --mode status` |
 
 ### `/run` 실행 프로토콜 (워크플로우 완료 후)
@@ -497,3 +502,237 @@ ULW가 활성화되면 아래 3가지 강화 규칙이 **현재 컨텍스트에 
 2. **파일 간 역할 분담**을 명확히 한다 — SKILL.md(WHY), references/(WHAT/HOW/VERIFY).
 3. **절대 기준 간 충돌 시나리오**를 구체적으로 명시한다 — 추상적 규칙이 아닌 실전 판단 기준.
 4. 수정 후 반드시 **절대 기준 관점에서 성찰**한다 — 문구만 넣지 않고 기존 내용과 충돌 여부를 점검.
+
+## DCI — Deep Content Intelligence (Independent Workflow, v1.0+)
+
+**DCI는 독립 워크플로우**다. Meta-Orchestrator의 W1→W2→W3→W4(Master) chain과 직교하는 병렬 track으로 작동한다. W1 raw articles(`data/raw/{date}/all_articles.jsonl`)만 입력으로 사용하며, W2/W3 완료 여부와 무관하게 실행 가능하다. Master Integration(WF4)은 기존 역할(W1+W2+W3 산출물 통합)을 그대로 유지한다.
+
+**α-strict 라벨 규칙**: 사용자 UI/triggers에서는 **"DCI"** 고유 이름만 사용한다. "WF4"라는 라벨은 기존 Master Integration 고유의 체인 정체성에 보존되며, DCI에 재사용하지 않는다. 이는 Meta-Orchestrator 절대 규칙 #3 "W1→W2→W3→W4"의 의미적 일관성을 지키기 위함이다.
+
+상세 설계: `prompt/execution-workflows/dci.md` (7-Phase protocol)
+구현 기록: `DECISION-LOG.md` ADR-071, ADR-072, **ADR-079** (independence promotion)
+
+### 사용법
+
+```bash
+# 권장 — 에이전트 오케스트레이션 하에 실행
+/run-dci-only              # 슬래시 커맨드 (주 entry point)
+
+# 직접 Python 실행 (테스트/CI용, 에이전트 미개입)
+.venv/bin/python main.py --mode dci --date YYYY-MM-DD --dry-run
+.venv/bin/python main.py --mode dci --date YYYY-MM-DD
+
+# 비활성화 (기존 WF1-4 Master만 실행)
+DCI_DISABLED=1 .venv/bin/python main.py --mode full
+```
+
+### 7-Phase Agent Workflow
+
+| Phase | 역할 | 기술 |
+|-------|-----|------|
+| 1 Preflight | 8 checks (corpus, 모델, DCI_ENABLED, SG 임계값) | Python CLI only (`validate_dci_preflight.py`) |
+| 2 Structural | L-1 → L2 레이어 실행 | Python subprocess, 순차 |
+| 3 Graph & Style | L3 → L5 레이어 실행 | Python subprocess |
+| 4 Reasoning | L6 Triadic + L7 GoT + L8 MC + L9 Metacog | L6만 LLM-essential, 나머지 Python |
+| 5 Narrator | L10 Doctoral report | Claude CLI + CE3 Python 재검증 |
+| 6 Review | 3-reviewer Agent Team (SG, Evidence, Narrative) | **유일한 Agent Team — 독립성 필수** |
+| 7 Reporting | Executive summary + Korean translation | Python CLI + `@translator` |
+
+**Agent 수**: 5개 (Orchestrator + 3 Reviewers + Translator 재사용). `@dci-preflight`·`@dci-reporter`는 **Python CLI로 대체** (할루시네이션 원천봉쇄 — ADR-079).
+
+### 아키텍처 요약
+
+| Layer | 역할 | 구현 |
+|-------|------|------|
+| L-1 | 외부 지식 pre-fetch | skeleton (API 사용 안 함) |
+| L0 | 문서 구조화 | Kiwi 한국어 + 다국어 regex + PDTB + URL |
+| L1 | 의미 단위 추출 | claims/quotes/numerical/CAMEO 규칙 |
+| L1.5 | 의미 표상 | 휴리스틱 SPO + FrameNet-lite |
+| L2 | 관계·화용 | Allen 13-relation + timex3 + hedging |
+| L3 | 지식 그래프 | NetworkX entity 공기 + community |
+| L4 | 교차문서 | SimHash + Jaccard thread clustering |
+| L5 | 심리·문체 | textstat + TTR/MTLD/HDD + Burrows Delta |
+| **L6** | **Triadic Ensemble** | **Claude CLI 4-lens (α/β/γ/δ-critic)** |
+| L7 | Graph-of-Thought | 순수 Python Bayesian DAG |
+| L8 | Monte Carlo | 1,024-leaf scenario tree |
+| L9 | Metacognitive | 블라인드 스팟 + 불확실성 분해 |
+| **L10** | **Doctoral narrator** | **Claude CLI + CE3 숫자 검증** |
+| L11 | Dashboard | Streamlit 탭 (`dashboard.py`) |
+
+### SG-Superhuman 10-Gate (구조적 할루시네이션 봉쇄)
+
+모든 DCI run은 다음 Python-결정론 gate를 통과해야 `PASS`:
+
+- G1 `char_coverage = 1.00` (본문 모든 문자가 최소 1회 진입)
+- G2 `triple_lens_coverage ≥ 3.0` (문자당 평균 3+ 렌즈 참조)
+- G3 `llm_body_injection_ratio = 1.00` (L6에 본문 전문 100% 투입)
+- G4 `technique_completeness = 93/93` (모드별 준수)
+- G5 `nli_verification_pass_rate ≥ 0.95` (DeBERTa-v3-MNLI, ADR-078 재정의)
+- G6 `triadic_consensus_rate ≥ 0.60` (productive-disagreement band, ADR-078)
+- G7 `adversarial_critic_pass ≥ 0.90` (Critic JSON parse)
+- G8 `evidence_3layer_complete = 100%` (CE4 article/segment/char)
+- G9 `technique_mode_compliance = 100%` (Registry vs trace)
+- G10 `uncertainty_quantified = 100%` (L7/L8/L9 artifacts presence)
+
+독립 검증 CLI:
+```bash
+python3 .claude/hooks/scripts/validate_dci_sg_superhuman.py --run-id {run_id} --project-dir .
+python3 .claude/hooks/scripts/validate_dci_evidence.py --run-id {run_id} --project-dir .
+python3 .claude/hooks/scripts/validate_dci_narrative.py --run-id {run_id} --project-dir .
+python3 .claude/hooks/scripts/validate_dci_char_coverage.py --run-id {run_id} --project-dir .
+```
+
+### 5조항 P1 Hallucination Prevention DNA (모든 DCI 에이전트 상속)
+
+1. **NEVER recompute any number.** Python validators produce all metrics.
+2. **NEVER invent `[ev:xxx]` markers.** Only reference markers already in `evidence_ledger.jsonl`.
+3. **NEVER declare PASS/FAIL for objective criteria.** Read exit code from `validate_dci_*.py`.
+4. **Quote numbers verbatim from Python CLI JSON output.** No rounding, no rephrasing of numeric values.
+5. **Subjective judgment is permitted ONLY for:** doctoral prose quality, semantic coherence, narrative framing, failure pattern diagnosis.
+
+### 제약 및 절대 기준
+
+- **외부 API 키**: 사용하지 않음 (사용자 명시). Wikidata/GDELT/SemScholar/FRED/Metaculus 모두 skeleton만.
+- **Anthropic API**: `claude --print` CLI subprocess로 구독 계정 사용 (ClaudeCodeCLIClient).
+- **HF 모델**: 실제 다운로드 허용 (DeBERTa-v3-MNLI 등).
+- **CE3 패턴**: 최종 보고서의 모든 숫자는 Python이 계산 → Claude CLI는 prose만 → Python이 재검증.
+- **Evidence Ledger**: 모든 `[ev:...]` 마커는 Python이 사전 등록, LLM은 참조만.
+
+### SOT 경로 (v1.0+ canonical)
+
+```yaml
+execution:
+  runs:
+    {run_id}:                         # dci-{date}-{HHMM}
+      workflows:
+        dci:                          # canonical — independent workflow
+          status: in_progress | completed | failed
+          phase: preflight | structural | graph_style | reasoning | narrator | review | reporting
+          run_id: {run_id}
+          date: YYYY-MM-DD
+          preflight: { status: PASS, ... }
+          layers:
+            L-1_external: { status, elapsed_seconds }
+            L0_discourse: { ... }
+            L1_5_meaning: { ... }     # "L1.5_meaning"의 SM-AW5 인코딩
+            ...
+          semantic_gates:
+            SG-Superhuman: { decision, gates: [...] }
+          review: { sg_verdict, evidence_resolution_rate, narrative_parity, pacs_score }
+          outputs: { final_report_en, final_report_ko, executive_summary, ... }
+```
+
+**Legacy SOT** (read-only, 과거 v0.5 run): `workflows.master.phases.dci.*` — RLM 무결성 위해 영구 보존. `_context_lib.py`가 canonical 우선, legacy fallback으로 스캔.
+
+### Public Narrative — 3-Layer 일반인 소비 레이어 (ADR-080)
+
+기술적 아티팩트 위에 얹히는 **일반인 친화 translation layer**. `facts_pool.json`을 단일 진실 원천 삼아 Claude CLI가 프로즈를 쓰고 Python이 재검증.
+
+| Layer | 이름 | 질문 | FKGL | 금지 |
+|-------|------|------|------|------|
+| L1 | 해석 (Interpretation) | "이게 무슨 뜻?" | ≤ 9 | 미래 예측 |
+| L2 | 통찰 (Insight) | "무슨 패턴?" | ≤ 12 | L1 반복 |
+| L3 | 미래 (Future) | "앞으로는?" | ≤ 13 | 확정적 예측 |
+
+**8 PUB P1 검증** (모두 Python 결정론):
+- PUB1 파일 존재 · PUB2 Korean-aware grade · PUB3 jargon ratio
+- PUB4 숫자 parity (facts_pool.numbers 화이트리스트)
+- PUB5 [ev:xxx] 화이트리스트 (facts_pool.allowed_markers)
+- PUB6 필수 섹션 · PUB7 금지어(반드시/100%/확실히) · PUB8 EN↔KO 구조 parity
+
+**실행**:
+```bash
+python3 .claude/hooks/scripts/generate_public_layers.py --date 2026-04-14
+# 또는 슬래시 커맨드
+/generate-public-layers
+```
+
+**대시보드**: `📋 Run Summary` 탭 → `📖 일반인용 3-Layer 해석` 섹션 (3카드 + EN/KO 토글 + 재생성)
+
+**산출물**: `reports/public/{date}/{interpretation,insight,future}.md` + `.ko.md` + `facts_pool.json` + `generation_metadata.json`
+
+### WF5 Personal Newspaper — 나만의 신문 (ADR-083)
+
+W1 raw 코퍼스를 소비해 **NYTimes-style HTML 신문**을 발행하는 독립 워크플로우. Meta-Orchestrator 무개입. DCI와 같은 standalone 패턴.
+
+**15 편집 원칙**: P1 완전 지리 커버리지 · P2 Balance Code (30% 상한) · P3 계층 일관성 · P4 고정 분량(±20%) · P5 3-Tier (global/local/weak_signal) · P6 Source Triangulation · P7 STEEPS 균형 · P8 CE4 증거 · P9 Fact/Context/Opinion 분리 · P10 Confidence Level · P11 한국어 일차 · P12 미래학자 관점 · P13 Dark Corners · P14 No Clickbait · P15 No Single-Source · P16 No Algorithmic Amplification.
+
+**17 Agent Team**: Chief Editor + 6 Continental Desks + 6 STEEPS Section Desks + 4 Specialty (dark-corner-scout, fact-triangulator, future-outlook-writer, copy-editor).
+
+**발행 주기**:
+- 일간 (매일 cron): 135,000 단어, `newspaper/daily/{date}/` — 9시간 읽기
+- 주간 (일요일, ≥4 daily 후): 205,000 단어, `newspaper/weekly/{YYYY-W##}/`
+
+**실행**:
+```bash
+/run-newspaper-only                 # 오늘 일간 생성
+/run-newspaper-weekly --week 2026-W16  # 주간 (Sunday 02:00 자동)
+# Skeleton (HTML 골격만, LLM 미호출, ~3초)
+python3 scripts/reports/generate_newspaper_daily.py \
+  --date 2026-04-14 --skeleton-only --project-dir .
+```
+
+**검증**: `validate_newspaper.py` NP1-NP12 (파일 존재·단어 수·대륙 커버리지·STEEPS·Dark Corners·Triangulation·CE4 밀도·F/C/O 구조·Confidence 라벨·금지어·단일소스·HTML 유효성).
+
+**대시보드**: `📰 Newspaper (WF5)` 탭 — iframe으로 HTML 직접 렌더, Daily/Weekly sub-tab, 6 KPI 카드 + 📄 풀텍스트.
+
+**SOT**: `execution.runs.{id}.workflows.newspaper.*` canonical. `newspaper` actor 신설.
+
+### Chart Interpretations — 대시보드 탭별 3-Layer 해석 (ADR-082)
+
+각 대시보드 탭 상단에 🌱 해석 / 💡 인사이트 / 🔮 미래통찰 카드를 자동 렌더. `run_daily.sh` Step 6.6에서 생성되어 `data/analysis/{date}/interpretations.json`으로 저장됨. 6 탭(Overview·Topics·Sentiment·TimeSeries·WordCloud·W3Insight)만 LLM 생성 대상이고, Article Explorer는 인터랙티브이므로 Python-only 처리, DCI 탭은 기존 `dci_layer_summary.py` 출력을 surface.
+
+**실행**:
+```bash
+/generate-chart-interpretations              # 오늘 6 탭 전체 생성
+python3 scripts/reports/generate_chart_interpretations.py \
+  --date 2026-04-14 --only overview,topics   # 특정 탭만
+```
+
+**검증**: CI1(구조)·CI2(FKGL)·CI3(숫자 parity)·CI4(마커 whitelist)·CI5(금지어)·CI6(cross-tab refs). 모두 Public Narrative validator 재사용.
+
+### 일일 cron 내러티브 체인 (ADR-081)
+
+`run_daily.sh` 는 `main.py --mode full` 실행 후 다음 순서로 내러티브 보고서를 자동 생성한다:
+
+```
+Step 4 (pipeline: crawl → analyze → insight) 성공 시
+  ├─ Step 6.3  @analysis-reporter    → workflows/analysis/outputs/analysis-report-{date}.md
+  ├─ Step 6.4  @insight-narrator     → data/insights/{run_id}/synthesis/insight_report.md (refined)
+  ├─ Step 6.45a src.reports.w4_appendix    → reports/final/integrated-report-{date}.md에 append
+  ├─ Step 6.45b src.reports.dci_layer_summary → data/dci/runs/{run_id}/final_report.md에 append
+  ├─ Step 6.5  Public Narrative 3-Layer  → reports/public/{date}/ (기존 ADR-080)
+  ├─ Step 6.6  Chart Interpretations (NEW, ADR-082) → data/analysis/{date}/interpretations.json
+  ├─ Step 6.6b @interp-fact-auditor 의미 교차 검증 (optional, WARNING-only)
+  ├─ Step 7   Personal Newspaper daily (NEW, ADR-083) → newspaper/daily/{date}/
+  └─ Step 7b  Personal Newspaper weekly (Sunday 만, ≥4 daily 필요)
+```
+
+> **PIPELINE_TIMEOUT 4h → 8h 확장**: ADR-083 WF5가 14 editorial desk × Claude CLI 호출로 ~1.5-2h 추가. `run_daily.sh:PIPELINE_TIMEOUT=28800`.
+
+에이전트 호출은 `scripts/reports/invoke_claude_agent.py` 범용 wrapper가 수행. 에이전트 MD를 Single Source of Truth로 두고 런타임 파싱. 실패 시 WARNING만 출력하고 파이프라인 본체는 계속 진행.
+
+**기존 agent-orchestrated 경로** (`/run-chain`)는 변경 없음 — Meta-Orchestrator가 각 워크플로우 오케스트레이터 호출하는 경로 유지.
+
+### Agent/CLI 매핑
+
+| 역할 | 기술 |
+|------|------|
+| SOT 단일 writer | `@dci-execution-orchestrator` |
+| Phase 1 Preflight | `validate_dci_preflight.py` (CLI only — 할루시네이션 봉쇄) |
+| Phase 6 Review (Team) | `@dci-sg-superhuman-auditor` + `@dci-evidence-auditor` + `@dci-narrative-reviewer` |
+| Phase 7 Reporter | `dci_executive_summary.py` (CLI only) |
+| Phase 7 Translation | `@translator` (기존 재사용) |
+| Phase transition gate | `dci_gates.py` |
+| Retry budget | `dci_retry_budget.py` |
+| Failure isolation | `src/dci/failure_policy.py` (14-layer 결정론 매트릭스) |
+| Resumability | `src/dci/resume.py` (checkpoint schema v1) |
+
+### 주요 트러블슈팅
+
+| 증상 | 원인 | 해결 |
+|------|------|------|
+| `No articles available for real-run` | 해당 날짜 `data/raw/{date}/all_articles.jsonl` 없음 | 먼저 `--mode crawl --date X` 실행 |
+| `claude CLI binary not found` | Claude Code 로그인 안 됨 | `claude` CLI 설치 + 로그인 |
+| `SM-AW5: segment '.5...' invalid` | dotted layer_id를 SOT에 직접 쓸 때 | sot_manager가 `.`→`_`로 자동 인코딩 |
+| `char_coverage < 1.00` | L0/L1/L5/L6 중 하나가 article 스팬을 추가 안 함 | orchestrator가 whitespace-only body 제외하는지 확인 |

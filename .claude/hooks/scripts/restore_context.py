@@ -497,19 +497,45 @@ def _build_recovery_output(source, latest_path, summary, sot_warning, snapshot_a
 
     # Opp-1: High-risk file warnings from Predictive Debugging cache
     # Surface files with error_rate > 50% for proactive awareness
+    #
+    # Schema contract (aggregate_risk_scores output):
+    #   risk_data["top_risk_files"]: list[str]  — file path keys
+    #   risk_data["files"]: dict[str, {risk_score, error_count, resolution_rate, ...}]
+    #
+    # Historical bug: previous consumer expected top_risk_files entries to be
+    # dicts and called .get() on them, crashing when data_sessions>=5 and
+    # top_risk_files was non-empty. Fixed 2026-04-09 during Phase 0.1 RW2
+    # ripple analysis — resolve each path via the files dict.
     if risk_data and risk_data.get("data_sessions", 0) >= 5:
-        top_risk = risk_data.get("top_risk_files", [])
-        high_risk = [f for f in top_risk if f.get("risk_score", 0) >= 3.0][:5]
+        top_risk = risk_data.get("top_risk_files", []) or []
+        files_meta = risk_data.get("files", {}) or {}
+        high_risk = []
+        for entry in top_risk:
+            # Support both legacy dict shape and current string shape
+            if isinstance(entry, dict):
+                meta = entry
+                path = entry.get("file", "?")
+            elif isinstance(entry, str):
+                meta = files_meta.get(entry, {})
+                if not isinstance(meta, dict):
+                    continue
+                path = entry
+            else:
+                continue
+            if meta.get("risk_score", 0) >= 3.0:
+                high_risk.append((path, meta))
+            if len(high_risk) >= 5:
+                break
         if high_risk:
             output_lines.append("")
             output_lines.append("■ 고위험 파일 (Predictive Debugging):")
-            for fr in high_risk:
-                fname = fr.get("file", "?")
-                score = fr.get("risk_score", 0)
-                errors = fr.get("error_count", 0)
-                res_rate = fr.get("resolution_rate", 0)
+            for fname, meta in high_risk:
+                score = meta.get("risk_score", 0)
+                errors = meta.get("error_count", 0)
+                res_rate = meta.get("resolution_rate", 0)
                 output_lines.append(
-                    f"  - {fname}: risk={score:.1f}, errors={errors}, resolved={res_rate:.0%}"
+                    f"  - {fname}: risk={score:.1f}, errors={errors}, "
+                    f"resolved={res_rate:.0%}"
                 )
 
     # Autopilot Mode context injection (conditional)

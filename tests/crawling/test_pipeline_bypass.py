@@ -79,7 +79,11 @@ class TestWriteBypassResult:
         p = object.__new__(CrawlingPipeline)
         p._extractor = MagicMock()
         p._dedup = MagicMock()
-        p._lookback_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        # Per-site lookback (P0 freshness fix) needs _crawl_start_utc.
+        # Without it, _site_lookback_cutoff() raises AttributeError inside
+        # _write_bypass_result. _lookback_cutoff is kept for any legacy path.
+        p._crawl_start_utc = datetime.now(timezone.utc)
+        p._lookback_cutoff = p._crawl_start_utc - timedelta(hours=24)
         p._get_site_config = MagicMock(return_value={})
         return p
 

@@ -233,6 +233,14 @@ def normalize_url(url: str, base_url: str = "") -> str:
     return normalized
 
 
+_SOCIAL_MEDIA_DOMAINS: frozenset[str] = frozenset({
+    # Pure social networks — never contain crawlable news articles
+    "bsky.app", "x.com", "twitter.com", "t.co",
+    "linkedin.com", "facebook.com", "instagram.com",
+    "tiktok.com",
+})
+
+
 def is_article_url(url: str, source_url: str = "") -> bool:
     """Heuristic check if a URL is likely an article page vs navigation/category.
 
@@ -252,6 +260,11 @@ def is_article_url(url: str, source_url: str = "") -> bool:
     parsed = urlparse(url)
     path = parsed.path.lower()
 
+    # Block social media domains — these are profiles/posts, never news articles
+    hostname = parsed.hostname or ""
+    if any(hostname == d or hostname.endswith("." + d) for d in _SOCIAL_MEDIA_DOMAINS):
+        return False
+
     # Skip non-HTML resources
     non_article_extensions = (
         ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".ico",
@@ -266,7 +279,7 @@ def is_article_url(url: str, source_url: str = "") -> bool:
     # Skip common non-article paths
     non_article_paths = (
         "/tag/", "/tags/", "/category/", "/categories/",
-        "/author/", "/authors/", "/page/", "/search",
+        "/author/", "/authors/", "/search",
         "/login", "/signup", "/register", "/subscribe",
         "/about", "/contact", "/privacy", "/terms",
         "/sitemap", "/robots.txt", "/feed", "/rss",
@@ -275,11 +288,24 @@ def is_article_url(url: str, source_url: str = "") -> bool:
     if any(segment in path for segment in non_article_paths):
         return False
 
+    # WordPress pagination: /page/N/ or /page/N (single integer segment after /page/).
+    # Exclude these but NOT date-based /page/YYYYMM/ paths (e.g. globaltimes.cn).
+    import re as _re
+    if _re.search(r'/page/\d{1,4}(?:/|$)', path):
+        return False
+
     # Very short paths are usually not articles (homepage, section pages)
     # e.g., "/", "/news/", "/politics/"
+    # Exception: Ghost CMS / flat-slug CMSes use single-segment paths for articles
+    # (e.g. 404media.co/article-slug-here/). Allow if the slug is long enough (≥20 chars)
+    # to distinguish from section pages like "/technology/" or "/politics/".
     path_segments = [s for s in path.split("/") if s]
     if len(path_segments) < 2:
-        return False
+        if not path_segments:
+            return False
+        # Single segment: allow only if slug is long (Ghost-style flat article URL)
+        if len(path_segments[0]) < 20:
+            return False
 
     return True
 

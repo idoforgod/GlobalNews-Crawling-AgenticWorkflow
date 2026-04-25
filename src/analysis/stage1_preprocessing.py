@@ -138,6 +138,181 @@ ENGLISH_NEWS_STOPWORDS: frozenset[str] = frozenset({
 })
 
 # =============================================================================
+# Multilingual Stopwords
+# =============================================================================
+# Covers European languages (es/pt/de/fr/it/nl/sv/no/da/pl/cs/ru) and
+# Southeast Asian languages (id/tl). These are applied in the "else" branch of
+# the fallback tokenizer where spaCy/Kiwi are not available. Source: a union of
+# common function-word lists from NLTK/snowball/spaCy language stopword sets,
+# pruned to high-frequency particles/articles/prepositions/conjunctions/pronouns.
+
+_STOP_ES: frozenset[str] = frozenset({
+    "de", "la", "que", "el", "en", "y", "a", "los", "del", "se",
+    "las", "por", "un", "para", "con", "no", "una", "su", "al", "lo",
+    "como", "mas", "pero", "sus", "le", "ya", "o", "este", "si", "porque",
+    "esta", "entre", "cuando", "muy", "sin", "sobre", "tambien", "me", "hasta",
+    "hay", "donde", "quien", "desde", "todo", "nos", "durante", "todos",
+    "uno", "les", "ni", "contra", "otros", "ese", "eso", "ante", "ellos",
+    "esto", "mi", "antes", "algunos", "que", "unos", "yo", "otro", "otras",
+    "otra", "el", "tanto", "esa", "estos", "mucho", "quienes", "nada",
+    "muchos", "cual", "poco", "ella", "estar", "estas", "algunas", "algo",
+    "nosotros",
+})
+
+_STOP_PT: frozenset[str] = frozenset({
+    "de", "a", "o", "que", "e", "do", "da", "em", "um", "para",
+    "com", "nao", "uma", "os", "no", "se", "na", "por", "mais", "as",
+    "dos", "como", "mas", "ao", "ele", "das", "a", "seu", "sua", "ou",
+    "quando", "muito", "nos", "ja", "eu", "tambem", "so", "pelo", "pela",
+    "ate", "isso", "ela", "entre", "depois", "sem", "mesmo", "aos", "seus",
+    "quem", "nas", "me", "esse", "eles", "voce", "essa", "num", "nem",
+    "suas", "meu", "as", "minha", "numa", "pelos", "elas", "havia", "seja",
+    "qual", "sera", "tenho", "lhe", "deles", "essas", "esses", "pelas",
+    "este", "dele", "tu", "te", "voces", "vos", "lhes", "meus", "minhas",
+    "teu", "tua", "teus", "tuas", "nosso", "nossa", "nossos", "nossas",
+    "dela", "delas",
+    # Common fragments seen in topic labels
+    "ao", "em", "si", "vit", "nam", "ang", "ng", "sa",
+})
+
+_STOP_DE: frozenset[str] = frozenset({
+    "der", "die", "und", "in", "den", "von", "zu", "das", "mit", "sich",
+    "des", "auf", "fur", "ist", "im", "dem", "nicht", "ein", "eine", "als",
+    "auch", "es", "an", "werden", "aus", "er", "hat", "dass", "sie", "nach",
+    "wird", "bei", "einer", "um", "am", "sind", "noch", "wie", "einem",
+    "uber", "einen", "so", "zum", "war", "haben", "nur", "oder", "aber",
+    "vor", "zur", "bis", "mehr", "durch", "man", "sein", "wurde", "sei",
+    "in", "prozent", "hatte", "kann", "gegen", "vom", "konnen", "schon",
+    "wenn", "habe", "seine", "mark", "ihre", "dann", "unter", "wir",
+    "jahr", "zwei", "jahren", "diese", "dieser", "wieder", "keine", "uhr",
+    "seiner", "worden", "will", "zwischen", "immer", "milliarden", "ob",
+    "dieses", "leben", "dem", "du",
+    # Fragments
+    "fur", "zum", "zur",
+})
+
+_STOP_FR: frozenset[str] = frozenset({
+    "le", "de", "un", "etre", "et", "a", "il", "avoir", "ne", "je",
+    "son", "que", "se", "qui", "ce", "dans", "en", "du", "elle", "au",
+    "de", "ce", "le", "pour", "pas", "que", "vous", "par", "sur", "faire",
+    "plus", "dire", "me", "on", "mon", "lui", "nous", "comme", "mais", "pouvoir",
+    "avec", "tout", "y", "aller", "voir", "en", "bien", "ou", "sans", "tu",
+    "notre", "si", "leur", "y", "entre", "cette", "encore", "quand", "deux",
+    "contre", "depuis", "apres", "trois", "pendant", "tous", "meme", "aussi",
+    "sous", "tres", "avant", "peu", "trop", "toujours", "jamais", "ici",
+    "la", "ces", "ses", "ma", "sa", "mes", "tes", "vos", "nos", "leurs",
+    "j", "d", "l", "s", "t", "n", "c", "m",
+    "du", "des", "la", "les", "au", "aux",
+    # Common fragments
+    "fr", "du",
+})
+
+_STOP_IT: frozenset[str] = frozenset({
+    "il", "di", "che", "e", "la", "per", "in", "un", "a", "non",
+    "con", "le", "una", "si", "da", "su", "i", "ma", "al", "come",
+    "lo", "se", "anche", "sono", "tra", "ci", "mi", "ti", "o", "ho",
+    "questo", "sua", "suo", "piu", "gli", "ha", "del", "della", "delle", "dei",
+    "nel", "nella", "nei", "alle", "alla", "agli", "ad", "col", "nello", "negli",
+    "sul", "sulla", "sulle", "sui", "dal", "dalla", "dalle", "dai", "ogni",
+    "ecc", "cioe", "quindi", "quando", "dove", "cosi", "molto", "poco", "mai",
+    "ancora", "sempre", "dopo", "prima", "contro", "senza", "fra", "verso",
+    "secondo", "durante", "davanti", "dietro", "sopra", "sotto", "dentro",
+    "essere", "avere", "fare", "dire", "potere", "dovere", "volere",
+    # Fragments
+    "di", "il", "ma",
+})
+
+_STOP_NL: frozenset[str] = frozenset({
+    "de", "en", "van", "ik", "te", "dat", "die", "in", "een", "hij",
+    "het", "niet", "zijn", "is", "was", "op", "aan", "met", "als", "voor",
+    "had", "er", "maar", "om", "hem", "dan", "zou", "of", "wat", "mijn",
+    "men", "dit", "zo", "door", "over", "ze", "zich", "bij", "ook", "tot",
+    "je", "mij", "uit", "der", "daar", "haar", "naar", "heb", "hoe", "heeft",
+    "hebben", "deze", "u", "want", "nog", "zal", "me", "zij", "nu", "ge",
+})
+
+_STOP_SV: frozenset[str] = frozenset({
+    "och", "det", "att", "i", "en", "jag", "hon", "som", "han", "pa",
+    "den", "med", "var", "sig", "for", "sa", "till", "ar", "men", "ett",
+    "om", "hade", "de", "av", "icke", "mig", "du", "henne", "dem", "over",
+    "honom", "ni", "efter", "man", "vi", "er", "nar", "kan", "vara", "blev",
+    "innan", "under", "mellan", "genom", "utan",
+})
+
+_STOP_NO: frozenset[str] = frozenset({
+    "og", "i", "jeg", "det", "at", "en", "et", "den", "til", "er",
+    "som", "pa", "de", "med", "han", "av", "ikke", "ikkje", "der", "sa",
+    "var", "meg", "seg", "men", "ett", "har", "om", "vi", "min", "mitt",
+    "ha", "hadde", "hun", "noe", "fra", "noen", "for", "far", "blir",
+    "ble", "blitt", "na", "kan", "hans", "henne", "hennes", "deres",
+})
+
+_STOP_DA: frozenset[str] = frozenset({
+    "og", "i", "jeg", "det", "at", "en", "den", "til", "er", "som",
+    "pa", "de", "med", "han", "af", "for", "ikke", "der", "var", "mig",
+    "sig", "men", "et", "har", "om", "vi", "min", "havde", "ham", "hun",
+    "nu", "over", "da", "fra", "du", "ud", "sin", "dem", "os", "op",
+    "man", "hans", "hvor", "eller", "hvad", "skal", "selv", "her", "alle",
+    "vil", "blev", "kunne", "ind", "nar", "ville", "jo", "sine", "noget",
+    "da",
+})
+
+_STOP_PL: frozenset[str] = frozenset({
+    "i", "w", "z", "na", "do", "nie", "to", "ze", "jest", "sie",
+    "od", "za", "jak", "co", "po", "ale", "tak", "tez", "ma", "juz",
+    "ja", "on", "ona", "ono", "my", "wy", "oni", "mnie", "mi", "cie",
+    "go", "jej", "ich", "nas", "was", "dla", "bez", "pod", "przed",
+    "nad", "przy", "przez", "wokol", "ktory", "ktora", "ktore", "byc",
+})
+
+_STOP_CS: frozenset[str] = frozenset({
+    "a", "i", "v", "se", "na", "je", "to", "ze", "s", "o",
+    "z", "jsem", "jsi", "je", "jsme", "jste", "jsou", "byl", "byla", "bylo",
+    "byli", "by", "bude", "budu", "budes", "budeme", "budete", "budou",
+    "jako", "pro", "nebo", "ale", "uz", "kdy", "kde", "co", "jak", "proc",
+    "protoze", "pokud", "pokud", "take", "tez", "nebot", "tedy", "tak",
+})
+
+_STOP_RU: frozenset[str] = frozenset({
+    "i", "v", "ne", "na", "ya", "s", "chto", "kak", "iz", "za",
+    "po", "do", "k", "a", "no", "tak", "u", "bi", "on", "vse",
+    "to", "my", "vy", "mne", "mi", "ti", "tam", "zdes", "eto", "tut",
+    "dlya", "bez", "pri", "pod", "nad", "iz", "kto", "kogo", "chego",
+})
+
+_STOP_ID: frozenset[str] = frozenset({
+    "yang", "dan", "di", "dari", "ke", "dengan", "untuk", "ini", "itu",
+    "pada", "tidak", "dalam", "akan", "adalah", "saya", "kami", "mereka",
+    "dia", "bagi", "bisa", "juga", "lebih", "atau", "jika", "saat",
+    "bahkan", "sampai", "oleh", "tetapi", "karena", "agar", "telah",
+    "sudah", "baru", "lagi", "belum", "masih", "harus", "bukan", "tak",
+    "saja", "sebagai", "sejak", "secara",
+})
+
+_STOP_TL: frozenset[str] = frozenset({
+    "ang", "ng", "sa", "at", "ay", "mga", "na", "ako", "siya", "kami",
+    "kayo", "sila", "ko", "mo", "niya", "natin", "namin", "ninyo", "nila",
+    "ito", "iyon", "iyan", "dito", "doon", "diyan", "saan", "kailan",
+    "bakit", "paano", "kung", "pero", "ngunit", "subalit", "kundi",
+    "dahil", "para", "laban", "tungkol", "kapag",
+})
+
+# Combined multilingual stopword set
+MULTILINGUAL_STOPWORDS: frozenset[str] = frozenset().union(
+    _STOP_ES, _STOP_PT, _STOP_DE, _STOP_FR, _STOP_IT, _STOP_NL,
+    _STOP_SV, _STOP_NO, _STOP_DA, _STOP_PL, _STOP_CS, _STOP_RU,
+    _STOP_ID, _STOP_TL,
+)
+
+# Per-language stopword lookup (for fallback tokenizer)
+LANGUAGE_STOPWORDS: dict[str, frozenset[str]] = {
+    "es": _STOP_ES, "pt": _STOP_PT, "de": _STOP_DE, "fr": _STOP_FR,
+    "it": _STOP_IT, "nl": _STOP_NL, "sv": _STOP_SV, "no": _STOP_NO,
+    "da": _STOP_DA, "pl": _STOP_PL, "cs": _STOP_CS, "ru": _STOP_RU,
+    "id": _STOP_ID, "tl": _STOP_TL,
+}
+
+# =============================================================================
 # Language-to-source mapping for detection verification
 # =============================================================================
 
@@ -714,8 +889,25 @@ def process_other_language_text(
             t for t in raw_tokens
             if t not in KOREAN_STOPWORDS and len(t) > 1
         ]
+    elif language in LANGUAGE_STOPWORDS:
+        # Multilingual fallback (es/pt/de/fr/it/nl/sv/no/da/pl/cs/ru/id/tl):
+        # lowercase + language-specific stopword removal + length filter.
+        # Fragments shorter than 3 chars are dropped to suppress particles
+        # (da/ms/di/fr/du/zu/il/ao/em) that leaked into previous topic labels.
+        lang_stops = LANGUAGE_STOPWORDS[language]
+        tokens = [
+            t.lower() for t in raw_tokens
+            if t.lower() not in lang_stops
+            and t.lower() not in MULTILINGUAL_STOPWORDS
+            and len(t) >= 3
+        ]
     else:
-        tokens = raw_tokens
+        # Unknown language: apply universal multilingual filter + length filter
+        tokens = [
+            t.lower() for t in raw_tokens
+            if t.lower() not in MULTILINGUAL_STOPWORDS
+            and len(t) >= 3
+        ]
 
     pos_tags = [(t, "UNK") for t in tokens]
 
@@ -1047,8 +1239,11 @@ class Stage1Preprocessor:
         crawled_at = _parse_timestamp(raw.get("crawled_at"))
 
         # ------ Build Parquet row ------
+        # D4 fix: preserve W1 evidence_id so the CE4 evidence chain passthrough
+        # survives Stage 1 → Stage 8 without re-derivation.
         parquet_row = {
             "article_id": article_id,
+            "evidence_id": raw.get("evidence_id", ""),
             "url": url,
             "title": title_normalized,
             "body": body_normalized,
@@ -1240,6 +1435,7 @@ class Stage1Preprocessor:
 
         for row in rows:
             columns["article_id"].append(row["article_id"])
+            columns["evidence_id"].append(row.get("evidence_id", ""))
             columns["url"].append(row["url"])
             columns["title"].append(row["title"])
             columns["body"].append(row["body"])

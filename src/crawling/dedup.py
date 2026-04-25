@@ -692,10 +692,12 @@ class DedupEngine:
             DedupResult with level=1 if duplicate, else level=0 (not duplicate).
         """
         url_hash = _sha256_hex(normalized_url)
-        row = self._conn.execute(
-            "SELECT article_id FROM seen_urls WHERE url_hash = ?",
-            (url_hash,),
-        ).fetchone()
+        # Thread safety: serialize SQLite access via self._lock.
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT article_id FROM seen_urls WHERE url_hash = ?",
+                (url_hash,),
+            ).fetchone()
 
         if row:
             return DedupResult(
@@ -755,12 +757,24 @@ class DedupEngine:
         if not title or not title.strip():
             return DedupResult.unique()
 
-        rows = self._conn.execute(
-            "SELECT simhash, article_id, source_id, title FROM content_hashes"
-        ).fetchall()
+        # Thread safety: SQLite connection is shared across threads with
+        # check_same_thread=False, so ALL access must serialize via self._lock.
+        # Materialize results inside the lock before iterating to avoid the
+        # cursor being invalidated by a concurrent write in another thread.
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT simhash, article_id, source_id, title "
+                "FROM content_hashes"
+            ).fetchall()
 
         for row in rows:
-            is_sim, confidence = titles_are_similar(title, row["title"])
+            row_title = row["title"]
+            # Defensive: even though the schema declares title NOT NULL,
+            # a corrupted fetch under extreme contention could theoretically
+            # return None. Skip any such row rather than crash.
+            if row_title is None:
+                continue
+            is_sim, confidence = titles_are_similar(title, row_title)
             # Trust is_sim from titles_are_similar (already applies Jaccard / Levenshtein
             # / prefix thresholds internally). No additional confidence gate needed here.
             if is_sim:
@@ -801,15 +815,22 @@ class DedupEngine:
         if candidate_hash == 0:
             return DedupResult.unique()
 
-        rows = self._conn.execute(
-            "SELECT simhash, article_id, source_id FROM content_hashes"
-        ).fetchall()
+        # Thread safety: serialize SQLite access via self._lock (same
+        # rationale as _check_title above).
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT simhash, article_id, source_id FROM content_hashes"
+            ).fetchall()
 
         best_match_id: Optional[str] = None
         best_confidence: float = 0.0
         best_source: str = ""
 
         for row in rows:
+            # Defensive: skip any row that came back with NULL simhash
+            # under extreme contention (shouldn't happen but harmless).
+            if row["simhash"] is None:
+                continue
             # Recover the unsigned 64-bit fingerprint from the stored signed int64
             stored_hash = _int64_to_uint64(row["simhash"])
             dist = hamming_distance(candidate_hash, stored_hash)

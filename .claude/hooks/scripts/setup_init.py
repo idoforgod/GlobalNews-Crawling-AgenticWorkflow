@@ -35,13 +35,20 @@ from datetime import datetime
 # Constants
 # =============================================================================
 
-# Hook scripts that must exist and have valid Python syntax (21 scripts)
+# Hook scripts that must exist and have valid Python syntax (26 scripts)
 # D-7: Intentionally duplicated in setup_maintenance.py — setup scripts are
 # independent from _context_lib.py by design (no import dependency).
+# Phase 0.1 (2026-04-09): added _execution_lib.py + block_sot_direct_edit.py
+# Phase 0.2 (2026-04-09): added _evidence_lib.py, _semantic_gate_lib.py, _longitudinal_lib.py
 REQUIRED_SCRIPTS = [
     "_context_lib.py",
+    "_evidence_lib.py",            # NEW Phase 0.2 — Evidence Chain (CE1 stable SHA256)
+    "_execution_lib.py",           # NEW Phase 0.1 — execution: section schema + helpers
+    "_longitudinal_lib.py",        # NEW Phase 0.2 — DoD/WoW/MoM deltas + anomaly detection
+    "_semantic_gate_lib.py",       # NEW Phase 0.2 — SG1/SG2/SG3 statistical primitives
     "block_destructive_commands.py",
     "block_secret_leak.py",
+    "block_sot_direct_edit.py",    # NEW Phase 0.1 — SOT direct Edit/Write physical block
     "block_test_file_edit.py",
     "context_guard.py",
     "diagnose_context.py",
@@ -89,7 +96,7 @@ def main():
     # 2. PyYAML availability (importlib.util.find_spec — NOT import)
     results.append(_check_pyyaml())
 
-    # 3. Hook scripts existence + syntax validation (19 scripts)
+    # 3. Hook scripts existence + syntax validation (26 scripts)
     scripts_dir = os.path.join(project_dir, ".claude", "hooks", "scripts")
     for script_name in REQUIRED_SCRIPTS:
         result = _check_script(scripts_dir, script_name)
@@ -382,8 +389,16 @@ def _check_sot_write_safety(scripts_dir):
     # D-7 intentional duplication — must match _context_lib.py:SOT_FILENAMES
     SOT_FILENAMES = ("state.yaml", "state.yml", "state.json")
     SOT_MARKERS = SOT_FILENAMES + ("sot_paths",)
-    # Scripts that legitimately reference SOT for read-only access
-    SOT_AWARE_SCRIPTS = {"_context_lib.py", "restore_context.py"}
+    # Scripts that legitimately reference SOT for read-only access.
+    # Phase 0.1 additions: _execution_lib.py (read-only helpers for execution:
+    # section), block_sot_direct_edit.py (PreToolUse hook comparing path to
+    # SOT_FILENAMES — no writes).
+    SOT_AWARE_SCRIPTS = {
+        "_context_lib.py",
+        "_execution_lib.py",          # NEW Phase 0.1
+        "block_sot_direct_edit.py",   # NEW Phase 0.1
+        "restore_context.py",
+    }
     WRITE_RE = re.compile(
         r'open\s*\([^)]*["\'](?:w|a)'      # open(..., "w"...) or open(..., "a"...)
         r'|atomic_write\s*\('               # atomic_write(...)

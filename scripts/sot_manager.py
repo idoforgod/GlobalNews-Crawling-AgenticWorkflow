@@ -25,6 +25,23 @@ import re
 import sys
 import tempfile
 
+# Phase 0.1 RW3: validate_execution_section integration.
+# _execution_lib lives in .claude/hooks/scripts/ — add to sys.path for import.
+_SOT_MANAGER_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_SOT_MANAGER_DIR)
+_HOOKS_SCRIPTS_DIR = os.path.join(
+    _PROJECT_ROOT, ".claude", "hooks", "scripts"
+)
+if _HOOKS_SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_SCRIPTS_DIR)
+
+try:
+    from _execution_lib import validate_execution_section as _validate_execution_section
+    _HAS_EXECUTION_LIB = True
+except ImportError:
+    _validate_execution_section = None  # type: ignore
+    _HAS_EXECUTION_LIB = False
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -38,6 +55,26 @@ VALID_TEAM_STATUSES = {"partial", "all_completed"}
 # validate_step_transition.py:HUMAN_STEPS, _context_lib.py:HUMAN_STEPS_SET,
 # and prompt/workflow.md "Steps 4, 8, 18"
 HUMAN_STEPS = frozenset({4, 8, 18})
+
+# Phase 0.1 additions — execution layer actor authorization
+# Valid actor names for --atomic-write / --init-execution.
+VALID_ACTORS = frozenset({"meta", "w1", "w2", "w3", "master", "dci", "newspaper"})
+# Current execution schema version (D-7: must match _execution_lib.SCHEMA_VERSION)
+EXECUTION_SCHEMA_VERSION = 1
+# Workflow names owned by W1/W2/W3/master/dci actors (D-7:
+#   must match _execution_lib.REQUIRED_WORKFLOW_KEYS)
+#
+# "dci" is the standalone Deep Content Intelligence workflow (v1.0+).
+# Independent of W1-W3 chain; owns its own top-level `workflows.dci.*` slot.
+# See prompt/execution-workflows/dci.md and DECISION-LOG ADR-073.
+WORKFLOW_ACTOR_MAP = {
+    "w1": "crawling",
+    "w2": "analysis",
+    "w3": "insight",
+    "master": "master",
+    "dci": "dci",
+    "newspaper": "newspaper",  # ADR-083 WF5
+}
 
 # D-7 intentional duplication — must match _context_lib.py:_PACS_WITH_MIN_RE, _PACS_SIMPLE_RE
 # SM5c uses these to parse pACS scores from log files.
@@ -237,6 +274,579 @@ def _validate_schema(wf):
                             warnings.append(f"SM-AP4: auto_approved_steps contains non-human step: {item}")
 
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# Phase 0.1 — Workflow freeze + actor authorization + atomic-write helpers
+# ---------------------------------------------------------------------------
+
+def _has_execution_layer(data):
+    """Return True if state.yaml has an execution: root section (freeze trigger).
+
+    One-way ratchet: once execution: is initialized, workflow.* becomes frozen.
+    Legacy states without execution section remain mutable for backward compat.
+
+    D-7: mirrors _execution_lib.has_execution_layer()
+    """
+    if not isinstance(data, dict):
+        return False
+    return isinstance(data.get("execution"), dict)
+
+
+def _check_workflow_freeze(data, context="operation"):
+    """Refuse any mutation targeting workflow.* when execution layer is active.
+
+    SM-WFR1: workflow.* hard freeze. Returns error dict if blocked, else None.
+    Callers pre-check this inside the exclusive lock before committing writes.
+
+    Args:
+        data: the full SOT root dict
+        context: operation name for error message
+
+    Returns:
+        {"valid": False, "error": ...} if frozen, None if write allowed
+    """
+    if _has_execution_layer(data):
+        return {
+            "valid": False,
+            "error": (
+                f"SM-WFR1: workflow.* section is frozen (execution layer "
+                f"active). '{context}' would mutate workflow.*, which is "
+                f"forbidden. The 20-step build workflow is historical and "
+                f"must not be modified. Writes must target execution.* "
+                f"via --atomic-write with an authorized --actor."
+            ),
+        }
+    return None
+
+
+def _validate_actor(actor, context="operation"):
+    """SM-AUTH1/SM-AUTH2: validate the --actor flag value.
+
+    Returns error dict or None.
+    """
+    if actor is None or actor == "":
+        return {
+            "valid": False,
+            "error": (
+                f"SM-AUTH1: --actor flag is required for '{context}'. "
+                f"Valid actors: {sorted(VALID_ACTORS)}"
+            ),
+        }
+    if actor not in VALID_ACTORS:
+        return {
+            "valid": False,
+            "error": (
+                f"SM-AUTH2: invalid --actor '{actor}'. "
+                f"Valid actors: {sorted(VALID_ACTORS)}"
+            ),
+        }
+    return None
+
+
+def _check_write_authorization(actor, path):
+    """SM-AUTH3: verify that `actor` may write to dotted section `path`.
+
+    Authorization matrix (from FINAL-DESIGN-triple-execution.md §4.1):
+
+        workflow.*                                  → ❌ HARD FREEZE (handled separately)
+        execution.schema_version                    → meta
+        execution.current_run_id                    → meta
+        execution.runs.{id}.status                  → meta
+        execution.runs.{id}.current_workflow        → meta
+        execution.runs.{id}.transition_log          → meta
+        execution.runs.{id}.trace                   → any actor (append-only)
+        execution.runs.{id}.workflows.crawling.*    → w1
+        execution.runs.{id}.workflows.analysis.*    → w2
+        execution.runs.{id}.workflows.insight.*     → w3
+        execution.runs.{id}.workflows.master.*      → master
+        execution.runs.{id}.meta_decisions          → meta
+        execution.runs.{id}.retry_budgets.*         → meta
+        execution.history                           → meta
+        execution.longitudinal_index                → meta
+        execution.retention                         → meta
+
+    Returns error dict or None.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return {
+            "valid": False,
+            "error": "SM-AW2: --path must be a non-empty dotted path",
+        }
+
+    # Root-scope guard: atomic-write only operates on execution.*
+    if not path.startswith("execution") and not path.startswith("workflow"):
+        return {
+            "valid": False,
+            "error": (
+                f"SM-AW2: --path '{path}' must start with 'execution.*'. "
+                f"Other root sections are not writable via atomic-write."
+            ),
+        }
+
+    # workflow.* paths are handled by workflow freeze check, not authorization.
+    # (If execution layer is active, freeze check triggers first.)
+    if path.startswith("workflow"):
+        return None  # defer to freeze check
+
+    # Trace append is permitted from any actor
+    if _is_trace_path(path):
+        return None
+
+    # Determine which actor owns this path
+    owner = _resolve_path_owner(path)
+    if owner is None:
+        return {
+            "valid": False,
+            "error": f"SM-AUTH3: no actor owns path '{path}'",
+        }
+    if owner == "meta" and actor != "meta":
+        return {
+            "valid": False,
+            "error": (
+                f"SM-AUTH3: actor '{actor}' cannot write to '{path}' "
+                f"(owner: meta)"
+            ),
+        }
+    if owner != actor:
+        return {
+            "valid": False,
+            "error": (
+                f"SM-AUTH3: actor '{actor}' cannot write to '{path}' "
+                f"(owner: {owner})"
+            ),
+        }
+    return None
+
+
+def _is_trace_path(path):
+    """Return True if path targets a run's trace list ROOT (any-actor append).
+
+    CE2 (Phase 0.1 L2 review fix): only matches the exact trace list root,
+    NOT sub-indexed paths like execution.runs.<id>.trace.0.status. Trace is
+    append-only; mutating existing entries would break the E9 invariant.
+    """
+    if not path.startswith("execution.runs."):
+        return False
+    parts = path.split(".")
+    # Exact match: execution.runs.<id>.trace (4 segments, no sub-indexing)
+    return len(parts) == 4 and parts[3] == "trace"
+
+
+# Path component regex: must be a word (letters/digits/underscore/hyphen).
+# Exec run IDs (exec-YYYY-MM-DD) and workflow names match this.
+_PATH_COMPONENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_\-]*$")
+
+
+def _validate_path_components(path):
+    """SOT path component validator.
+
+    CE3 (Phase 0.1 L2 review fix): reject path traversal, empty segments,
+    dunder attacks, and any non-word characters. Every component must match
+    [A-Za-z_][A-Za-z0-9_\\-]*.
+
+    Returns error dict or None.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return {
+            "valid": False,
+            "error": "SM-AW2: --path must be a non-empty dotted string",
+        }
+    parts = path.split(".")
+    for i, part in enumerate(parts):
+        if part == "":
+            return {
+                "valid": False,
+                "error": f"SM-AW5: empty path segment at index {i} in '{path}'",
+            }
+        if part in ("..", ".", "__proto__", "constructor", "prototype"):
+            return {
+                "valid": False,
+                "error": f"SM-AW5: forbidden segment '{part}' in path",
+            }
+        if not _PATH_COMPONENT_RE.match(part):
+            return {
+                "valid": False,
+                "error": (
+                    f"SM-AW5: segment '{part}' contains invalid characters. "
+                    f"Must match [A-Za-z_][A-Za-z0-9_-]*"
+                ),
+            }
+    return None
+
+
+def _resolve_path_owner(path):
+    """Determine which actor owns a given dotted path under execution.*.
+
+    Returns one of: 'meta', 'w1', 'w2', 'w3', 'master', or None.
+    """
+    # Top-level execution fields
+    if path == "execution.schema_version":
+        return "meta"
+    if path == "execution.current_run_id":
+        return "meta"
+    if path == "execution.history" or path.startswith("execution.history."):
+        return "meta"
+    if path == "execution.longitudinal_index" or path.startswith("execution.longitudinal_index."):
+        return "meta"
+    if path == "execution.retention" or path.startswith("execution.retention."):
+        return "meta"
+    if path == "execution.schema_migrations" or path.startswith("execution.schema_migrations."):
+        return "meta"
+
+    # Per-run paths: execution.runs.<id>.<field>...
+    if not path.startswith("execution.runs."):
+        return None
+    parts = path.split(".")
+    if len(parts) < 4:
+        # execution.runs or execution.runs.<id> — meta-level
+        return "meta"
+
+    run_field = parts[3]
+
+    # Meta-only run-level fields
+    if run_field in ("status", "started_at", "completed_at", "current_workflow",
+                     "transition_log", "meta_decisions"):
+        return "meta"
+
+    # retry_budgets.meta.* → meta; retry_budgets.workflow.{name}.* → meta too
+    # (Meta owns all retry budgets to enforce global limits.)
+    if run_field == "retry_budgets":
+        return "meta"
+
+    # Trace is any-actor append (handled by _is_trace_path)
+    if run_field == "trace":
+        return None  # caller uses _is_trace_path first
+
+    # Workflows section: execution.runs.<id>.workflows.<name>.<field>...
+    if run_field == "workflows":
+        if len(parts) < 5:
+            return "meta"  # whole workflows dict → meta
+        wf_name = parts[4]
+        # Reverse map workflow name → actor
+        for actor, owned_wf in WORKFLOW_ACTOR_MAP.items():
+            if wf_name == owned_wf:
+                return actor
+        return None  # unknown workflow name
+
+    return None
+
+
+def _set_dotted_path(root, dotted, value):
+    """Set a nested dict value by dotted path, creating intermediate dicts.
+
+    Used by atomic-write. `dotted` must already be authorized by caller.
+    Returns True on success, False if path traversal hit a non-dict.
+    """
+    parts = dotted.split(".")
+    cursor = root
+    for key in parts[:-1]:
+        if not isinstance(cursor, dict):
+            return False
+        if key not in cursor or not isinstance(cursor.get(key), dict):
+            cursor[key] = {}
+        cursor = cursor[key]
+    if not isinstance(cursor, dict):
+        return False
+    cursor[parts[-1]] = value
+    return True
+
+
+def _get_dotted_path(root, dotted, default=None):
+    """Get a nested value by dotted path, or default."""
+    parts = dotted.split(".")
+    cursor = root
+    for key in parts:
+        if not isinstance(cursor, dict) or key not in cursor:
+            return default
+        cursor = cursor[key]
+    return cursor
+
+
+def _append_to_dotted_list(root, dotted, value):
+    """Append `value` to the list at `dotted` path; create list if absent."""
+    current = _get_dotted_path(root, dotted)
+    if current is None:
+        # Create empty list
+        if not _set_dotted_path(root, dotted, []):
+            return False
+        current = _get_dotted_path(root, dotted)
+    if not isinstance(current, list):
+        return False
+    current.append(value)
+    return True
+
+
+def _evaluate_guard(root, guard_expr):
+    """Evaluate a simple guard expression of the form `path==value`.
+
+    Supports:
+        execution.runs.<id>.current_workflow==crawling
+        execution.current_run_id==exec-2026-04-09
+        path!=value
+
+    Returns (ok: bool, reason: str).
+    """
+    if not guard_expr:
+        return True, "no guard"
+    # Find operator (order matters: != before ==)
+    for op in ("!=", "=="):
+        if op in guard_expr:
+            left, right = guard_expr.split(op, 1)
+            left = left.strip()
+            right = right.strip()
+            # Unwrap quoted string
+            if len(right) >= 2 and right[0] in ('"', "'") and right[-1] == right[0]:
+                right = right[1:-1]
+            # Handle null keyword
+            if right == "null":
+                expected = None
+            elif right.isdigit():
+                expected = int(right)
+            else:
+                expected = right
+            actual = _get_dotted_path(root, left)
+            if op == "==":
+                return actual == expected, f"{left}={actual!r} vs {expected!r}"
+            else:
+                return actual != expected, f"{left}={actual!r} vs {expected!r}"
+    return False, f"SM-AW1: unsupported guard expression: {guard_expr}"
+
+
+def cmd_init_execution(project_dir, actor):
+    """Initialize the execution: root section in state.yaml.
+
+    Idempotent: second call on an already-initialized SOT preserves existing
+    runs/history. Creates default scaffolding only for missing keys.
+
+    Requires --actor meta (only Meta may initialize the execution layer).
+    """
+    auth_err = _validate_actor(actor, "init-execution")
+    if auth_err:
+        return auth_err
+    if actor != "meta":
+        return {
+            "valid": False,
+            "error": (
+                f"SM-AUTH3: only 'meta' actor may run --init-execution, "
+                f"got '{actor}'"
+            ),
+        }
+
+    # CE4 (Phase 0.1 L2 review fix): hard-fail if schema validation unavailable
+    if not _HAS_EXECUTION_LIB or _validate_execution_section is None:
+        return {
+            "valid": False,
+            "error": (
+                "SM-AW6: schema validation unavailable. "
+                "_execution_lib.py could not be imported. "
+                "Refusing to initialize execution section without validation."
+            ),
+        }
+
+    try:
+        sot = _sot_path(project_dir)
+        # State file must already exist; init-execution is an extension, not
+        # a fresh workflow bootstrap.
+        if not os.path.exists(sot):
+            return {
+                "valid": False,
+                "error": (
+                    f"SOT not found: {sot}. Use --init first to create the "
+                    f"workflow section."
+                ),
+            }
+
+        with _SOTLock(sot, exclusive=True):
+            data, sot = _read_sot_unlocked(project_dir)
+
+            existing = data.get("execution") if isinstance(data, dict) else None
+            if existing is None or not isinstance(existing, dict):
+                # Create fresh execution section
+                data["execution"] = {
+                    "schema_version": EXECUTION_SCHEMA_VERSION,
+                    "schema_migrations": [],
+                    "current_run_id": None,
+                    "runs": {},
+                    "history": [],
+                    "longitudinal_index": {
+                        "daily": {}, "weekly": {}, "monthly": {},
+                    },
+                    "retention": {"hot_runs": 30, "warm_runs": 365},
+                }
+                action = "initialized"
+            else:
+                # Idempotent: fill in missing keys without wiping existing data
+                defaults = {
+                    "schema_version": EXECUTION_SCHEMA_VERSION,
+                    "schema_migrations": [],
+                    "current_run_id": None,
+                    "runs": {},
+                    "history": [],
+                    "longitudinal_index": {
+                        "daily": {}, "weekly": {}, "monthly": {},
+                    },
+                    "retention": {"hot_runs": 30, "warm_runs": 365},
+                }
+                for k, v in defaults.items():
+                    if k not in existing:
+                        existing[k] = v
+                action = "reconciled"
+
+            _write_sot_atomic(sot, data)
+
+            # Phase 0.1 RW3: post-write E1-E15 schema validation
+            result = {
+                "valid": True,
+                "action": f"execution_section_{action}",
+                "schema_version": data["execution"]["schema_version"],
+            }
+            if _HAS_EXECUTION_LIB and _validate_execution_section is not None:
+                warnings = _validate_execution_section(data["execution"])
+                if warnings:
+                    result["schema_warnings"] = warnings
+            return result
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
+def cmd_atomic_write(project_dir, actor, path, value_str, guard=None,
+                     append_list=False):
+    """Atomic check-and-write to a dotted path under execution.*.
+
+    P1 Hallucination Prevention: TOCTOU-safe section writes. Guard and write
+    occur inside the exclusive fcntl lock, so no intermediate state can
+    change between guard evaluation and commit.
+
+    Args:
+        project_dir: project root
+        actor: one of VALID_ACTORS
+        path: dotted path (must start with execution.*)
+        value_str: JSON-encoded value (string, int, bool, dict, list, null)
+        guard: optional "path==value" guard expression
+        append_list: if True, append value to list at path (else set)
+
+    Returns JSON result dict.
+    """
+    # SM-AUTH1/2: Validate actor flag
+    auth_err = _validate_actor(actor, "atomic-write")
+    if auth_err:
+        return auth_err
+
+    # SM-AW5 (CE3 fix): validate path components before ANY other processing.
+    path_err = _validate_path_components(path)
+    if path_err:
+        return path_err
+
+    # CE4 (Phase 0.1 L2 review fix): schema validation MUST be available for
+    # atomic-write. Hard-fail if _execution_lib import failed — silent
+    # degradation would defeat P1 Supremacy.
+    if not _HAS_EXECUTION_LIB or _validate_execution_section is None:
+        return {
+            "valid": False,
+            "error": (
+                "SM-AW6: schema validation unavailable. "
+                "_execution_lib.py could not be imported. "
+                "Atomic writes are refused to prevent silent P1 bypass."
+            ),
+        }
+
+    # Parse the value
+    try:
+        value = json.loads(value_str) if value_str is not None else None
+    except (json.JSONDecodeError, TypeError) as e:
+        return {
+            "valid": False,
+            "error": f"SM-AW3: --value is not valid JSON: {e}",
+        }
+
+    # CE2 trace append-only enforcement: if target is a trace list, force
+    # --append-list to prevent index-based mutation.
+    if _is_trace_path(path) and not append_list:
+        return {
+            "valid": False,
+            "error": (
+                "SM-AW7: trace is append-only. Use --append-list when "
+                "writing to execution.runs.<id>.trace"
+            ),
+        }
+
+    try:
+        sot = _sot_path(project_dir)
+        if not os.path.exists(sot):
+            return {"valid": False, "error": f"SOT not found: {sot}"}
+
+        with _SOTLock(sot, exclusive=True):
+            data, sot = _read_sot_unlocked(project_dir)
+
+            # SM-WFR1: Freeze workflow.* (must come before authorization
+            # because a user can target workflow.* intentionally)
+            if path.startswith("workflow"):
+                freeze_err = _check_workflow_freeze(data, context="atomic-write")
+                if freeze_err:
+                    return freeze_err
+                # Unfrozen workflow writes are not supported via atomic-write
+                return {
+                    "valid": False,
+                    "error": (
+                        "SM-AW2: atomic-write targets execution.* only. "
+                        "Use specific commands (--advance-step etc.) for "
+                        "legacy workflow writes when execution layer is "
+                        "not active."
+                    ),
+                }
+
+            # SM-AUTH3: Section ownership
+            authz_err = _check_write_authorization(actor, path)
+            if authz_err:
+                return authz_err
+
+            # SM-AW1: Guard evaluation (TOCTOU protection)
+            if guard:
+                ok, reason = _evaluate_guard(data, guard)
+                if not ok:
+                    return {
+                        "valid": False,
+                        "error": f"SM-AW1: guard failed: {reason}",
+                    }
+
+            # Commit: set or append
+            if append_list:
+                if not _append_to_dotted_list(data, path, value):
+                    return {
+                        "valid": False,
+                        "error": (
+                            f"SM-AW4: append failed for path '{path}' "
+                            f"(not a list or invalid traversal)"
+                        ),
+                    }
+            else:
+                if not _set_dotted_path(data, path, value):
+                    return {
+                        "valid": False,
+                        "error": (
+                            f"SM-AW4: set failed for path '{path}' "
+                            f"(traversal hit non-dict)"
+                        ),
+                    }
+
+            _write_sot_atomic(sot, data)
+
+            # Phase 0.1 RW3: post-write E1-E15 schema validation
+            result = {
+                "valid": True,
+                "action": "atomic_write",
+                "actor": actor,
+                "path": path,
+                "mode": "append" if append_list else "set",
+            }
+            if _HAS_EXECUTION_LIB and _validate_execution_section is not None:
+                warnings = _validate_execution_section(data.get("execution"))
+                if warnings:
+                    result["schema_warnings"] = warnings
+            return result
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +1064,12 @@ def cmd_advance_step(project_dir, step_num, force=False):
         sot = _sot_path(project_dir)
         with _SOTLock(sot, exclusive=True):
             data, sot = _read_sot_unlocked(project_dir)
+
+            # SM-WFR1: workflow.* hard freeze (Phase 0.1)
+            freeze_err = _check_workflow_freeze(data, "advance-step")
+            if freeze_err:
+                return freeze_err
+
             wf = _extract_wf(data)
 
             # CR-1: Step range validation
@@ -531,6 +1147,12 @@ def cmd_record_output(project_dir, step_num, output_path):
         sot = _sot_path(project_dir)
         with _SOTLock(sot, exclusive=True):
             data, sot = _read_sot_unlocked(project_dir)
+
+            # SM-WFR1: workflow.* hard freeze (Phase 0.1)
+            freeze_err = _check_workflow_freeze(data, "record-output")
+            if freeze_err:
+                return freeze_err
+
             wf = _extract_wf(data)
 
             # CR-1: Step range validation
@@ -588,6 +1210,12 @@ def cmd_update_pacs(project_dir, step_num, f_score, c_score, l_score):
         sot = _sot_path(project_dir)
         with _SOTLock(sot, exclusive=True):
             data, sot = _read_sot_unlocked(project_dir)
+
+            # SM-WFR1: workflow.* hard freeze (Phase 0.1)
+            freeze_err = _check_workflow_freeze(data, "update-pacs")
+            if freeze_err:
+                return freeze_err
+
             wf = _extract_wf(data)
 
             # CR-1: Step range validation
@@ -655,6 +1283,12 @@ def cmd_update_team(project_dir, team_json):
         sot = _sot_path(project_dir)
         with _SOTLock(sot, exclusive=True):
             data, sot = _read_sot_unlocked(project_dir)
+
+            # SM-WFR1: workflow.* hard freeze (Phase 0.1)
+            freeze_err = _check_workflow_freeze(data, "update-team")
+            if freeze_err:
+                return freeze_err
+
             wf = _extract_wf(data)
 
             # SM8: Validate required fields
@@ -730,6 +1364,12 @@ def cmd_set_autopilot(project_dir, enabled_str):
         sot = _sot_path(project_dir)
         with _SOTLock(sot, exclusive=True):
             data, sot = _read_sot_unlocked(project_dir)
+
+            # SM-WFR1: workflow.* hard freeze (Phase 0.1)
+            freeze_err = _check_workflow_freeze(data, "set-autopilot")
+            if freeze_err:
+                return freeze_err
+
             wf = _extract_wf(data)
 
             # Ensure autopilot section exists
@@ -808,6 +1448,12 @@ def cmd_add_auto_approved(project_dir, step_num):
         sot = _sot_path(project_dir)
         with _SOTLock(sot, exclusive=True):
             data, sot = _read_sot_unlocked(project_dir)
+
+            # SM-WFR1: workflow.* hard freeze (Phase 0.1)
+            freeze_err = _check_workflow_freeze(data, "add-auto-approved")
+            if freeze_err:
+                return freeze_err
+
             wf = _extract_wf(data)
 
             # SM-AA2: autopilot must be enabled
@@ -877,6 +1523,12 @@ def cmd_set_status(project_dir, new_status):
         sot = _sot_path(project_dir)
         with _SOTLock(sot, exclusive=True):
             data, sot = _read_sot_unlocked(project_dir)
+
+            # SM-WFR1: workflow.* hard freeze (Phase 0.1)
+            freeze_err = _check_workflow_freeze(data, "set-status")
+            if freeze_err:
+                return freeze_err
+
             wf = _extract_wf(data)
             old_status = wf.get("status", "unknown")
 
@@ -907,6 +1559,172 @@ def cmd_set_status(project_dir, new_status):
 
 
 # ---------------------------------------------------------------------------
+# DCI (Deep Content Intelligence) — independent workflow helpers (v1.0+)
+# ---------------------------------------------------------------------------
+#
+# Canonical SOT path (v1.0+): execution.runs.{id}.workflows.dci.*
+# Legacy SOT path (read-only): execution.runs.{id}.workflows.master.phases.dci.*
+#
+# DCI is a standalone independent workflow (promoted from WF4-Master Phase 4
+# in ADR-073). The "dci" actor owns workflows.dci.* per WORKFLOW_ACTOR_MAP.
+# Historical runs at the legacy path remain readable by _context_lib.py and
+# validate_sot_schema() S10 (dual-location support). These helpers now write
+# ONLY to the canonical path.
+#
+# D-7 intentional duplication — DCI_LAYERS below must match
+# src/config/constants.py:DCI_LAYERS and
+# prompt/execution-workflows/dci.md §Phases. Changing one requires syncing all.
+
+_DCI_LAYERS = frozenset({
+    "L-1_external",
+    "L0_discourse",
+    "L1_semantic",
+    "L1.5_meaning",
+    "L2_relations",
+    "L3_kg_hypergraph",
+    "L4_cross_document",
+    "L5_psycho_style",
+    "L6_triadic_synthesis",
+    "L7_graph_of_thought",
+    "L8_monte_carlo",
+    "L9_metacognitive",
+    "L10_final_report",
+    "L11_dashboard",
+})
+_DCI_VALID_STATUSES = frozenset({"pending", "running", "completed", "failed", "skipped"})
+
+
+def cmd_dci_set_layer(project_dir, run_id, layer_id, status, elapsed=None,
+                      article_count=None, notes=None):
+    """Write DCI layer state to the canonical SOT path (v1.0+).
+
+    Path: ``execution.runs.<run_id>.workflows.dci.layers.<layer_id>``
+
+    Invariants enforced before the atomic write:
+        SM-DCI1: layer_id must be in _DCI_LAYERS (14 valid IDs)
+        SM-DCI2: status must be in _DCI_VALID_STATUSES
+        SM-DCI3: elapsed (if provided) must be non-negative number
+        SM-DCI4: article_count (if provided) must be non-negative int
+
+    Semantic validation (SG-Superhuman thresholds) is src/dci/'s job, not
+    this helper — we only check structural shape. Write is serialized via
+    the existing cmd_atomic_write path, so exclusive fcntl lock applies.
+
+    Args:
+        project_dir: project root
+        run_id: execution run identifier
+        layer_id: one of 14 DCI layer IDs
+        status: pending | running | completed | failed | skipped
+        elapsed: seconds spent in this layer (optional)
+        article_count: articles processed (optional)
+        notes: free-form note string (optional)
+
+    Returns JSON result dict.
+    """
+    # SM-DCI1
+    if layer_id not in _DCI_LAYERS:
+        return {
+            "valid": False,
+            "error": (
+                f"SM-DCI1: unknown DCI layer '{layer_id}'. "
+                f"Must be one of: {sorted(_DCI_LAYERS)}"
+            ),
+        }
+    # SM-DCI2
+    if status not in _DCI_VALID_STATUSES:
+        return {
+            "valid": False,
+            "error": (
+                f"SM-DCI2: invalid status '{status}'. "
+                f"Must be one of: {sorted(_DCI_VALID_STATUSES)}"
+            ),
+        }
+    # SM-DCI3 / SM-DCI4
+    if elapsed is not None:
+        if not isinstance(elapsed, (int, float)) or elapsed < 0:
+            return {"valid": False, "error": "SM-DCI3: elapsed must be non-negative"}
+    if article_count is not None:
+        if not isinstance(article_count, int) or article_count < 0:
+            return {
+                "valid": False,
+                "error": "SM-DCI4: article_count must be non-negative int",
+            }
+    if not isinstance(run_id, str) or not run_id.strip():
+        return {"valid": False, "error": "SM-DCI5: run_id must be non-empty string"}
+
+    # Build the layer entry — only include provided fields (caller can
+    # incrementally update; absent fields don't overwrite).
+    entry = {"status": status}
+    if elapsed is not None:
+        entry["elapsed_seconds"] = round(float(elapsed), 3)
+    if article_count is not None:
+        entry["article_count"] = article_count
+    if notes is not None:
+        entry["notes"] = str(notes)[:512]  # cap length
+
+    # SOT path segments cannot contain dots (SM-AW5 forbids '.' in segments
+    # because '.' is the delimiter itself). Canonical layer_id "L1.5_meaning"
+    # is encoded as "L1_5_meaning" for SOT writes; readers round-trip back.
+    safe_layer_id = layer_id.replace(".", "_")
+    path = (
+        f"execution.runs.{run_id}.workflows.dci."
+        f"layers.{safe_layer_id}"
+    )
+    value_str = json.dumps(entry, ensure_ascii=False)
+
+    # Delegate to atomic-write with dci actor (v1.0+ independent workflow)
+    return cmd_atomic_write(
+        project_dir,
+        actor="dci",
+        path=path,
+        value_str=value_str,
+        guard=None,
+        append_list=False,
+    )
+
+
+def cmd_dci_set_gate(project_dir, run_id, gate_name, gate_value):
+    """Write SG-Superhuman gate result to canonical SOT path (v1.0+).
+
+    Path: ``execution.runs.<run_id>.workflows.dci.semantic_gates.<gate_name>``
+
+    No value shape is enforced here — src/dci/ validators compute the
+    structured gate dict (pass/fail, score, threshold, evidence). This
+    helper is the thin write path. DCI actor authorization applies.
+
+    Args:
+        project_dir: project root
+        run_id: execution run id
+        gate_name: SG identifier (e.g., "SG-Superhuman", "char_coverage")
+        gate_value: dict or scalar — serialized as JSON
+
+    Returns JSON result dict.
+    """
+    if not isinstance(gate_name, str) or not gate_name.strip():
+        return {"valid": False, "error": "SM-DCI6: gate_name must be non-empty string"}
+    if not isinstance(run_id, str) or not run_id.strip():
+        return {"valid": False, "error": "SM-DCI5: run_id must be non-empty string"}
+
+    path = (
+        f"execution.runs.{run_id}.workflows.dci."
+        f"semantic_gates.{gate_name}"
+    )
+    try:
+        value_str = json.dumps(gate_value, ensure_ascii=False)
+    except (TypeError, ValueError) as e:
+        return {"valid": False, "error": f"SM-DCI7: gate_value not JSON-serializable: {e}"}
+
+    return cmd_atomic_write(
+        project_dir,
+        actor="dci",
+        path=path,
+        value_str=value_str,
+        guard=None,
+        append_list=False,
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -931,9 +1749,93 @@ def main():
                         help="Force advance step — bypass SM5 quality gate evidence checks. "
                              "Use ONLY when the user explicitly instructs override.")
 
+    # Phase 0.1 — execution layer extensions
+    parser.add_argument("--atomic-write", action="store_true",
+                        help="Atomic check-and-write to a dotted path under execution.*")
+    parser.add_argument("--init-execution", action="store_true",
+                        help="Initialize the execution: root section (requires --actor meta)")
+    parser.add_argument("--actor", default=None,
+                        help="Actor for write authorization: meta|w1|w2|w3|master")
+    parser.add_argument("--path", default=None,
+                        help="Dotted path for --atomic-write (e.g., execution.current_run_id)")
+    parser.add_argument("--value", default=None,
+                        help="JSON-encoded value for --atomic-write")
+    parser.add_argument("--guard", default=None,
+                        help="Optional guard expression for --atomic-write (path==value)")
+    parser.add_argument("--append-list", action="store_true",
+                        help="For --atomic-write: append value to list at path")
+
+    # WF4-DCI v0.5 — master-actor helpers for Phase 4 state writes
+    parser.add_argument("--dci-set-layer", action="store_true",
+                        help="Write DCI layer state to workflows.master.phases.dci.layers.<id>")
+    parser.add_argument("--dci-set-gate", action="store_true",
+                        help="Write SG-Superhuman gate result to workflows.master.phases.dci.semantic_gates.<name>")
+    parser.add_argument("--run-id", default=None,
+                        help="Execution run id (for --dci-set-layer / --dci-set-gate)")
+    parser.add_argument("--layer-id", default=None,
+                        help="DCI layer id (for --dci-set-layer); one of 14 IDs")
+    parser.add_argument("--status", default=None,
+                        help="Status (for --dci-set-layer): pending|running|completed|failed|skipped")
+    parser.add_argument("--elapsed", type=float, default=None,
+                        help="Optional elapsed seconds (for --dci-set-layer)")
+    parser.add_argument("--article-count", type=int, default=None,
+                        help="Optional article count (for --dci-set-layer)")
+    parser.add_argument("--notes", default=None,
+                        help="Optional notes (for --dci-set-layer)")
+    parser.add_argument("--gate-name", default=None,
+                        help="Gate name (for --dci-set-gate)")
+    parser.add_argument("--gate-value", default=None,
+                        help="JSON-encoded gate value (for --dci-set-gate)")
+
     args = parser.parse_args()
 
-    if args.read:
+    # Phase 0.1 command dispatch (execution layer) — take precedence
+    if args.init_execution:
+        result = cmd_init_execution(args.project_dir, args.actor)
+    elif args.dci_set_layer:
+        if not args.run_id or not args.layer_id or not args.status:
+            result = {
+                "valid": False,
+                "error": "--dci-set-layer requires --run-id, --layer-id, --status",
+            }
+        else:
+            result = cmd_dci_set_layer(
+                args.project_dir,
+                run_id=args.run_id,
+                layer_id=args.layer_id,
+                status=args.status,
+                elapsed=args.elapsed,
+                article_count=args.article_count,
+                notes=args.notes,
+            )
+    elif args.dci_set_gate:
+        if not args.run_id or not args.gate_name or args.gate_value is None:
+            result = {
+                "valid": False,
+                "error": "--dci-set-gate requires --run-id, --gate-name, --gate-value",
+            }
+        else:
+            try:
+                gate_value = json.loads(args.gate_value)
+            except (json.JSONDecodeError, TypeError) as e:
+                result = {"valid": False, "error": f"--gate-value not valid JSON: {e}"}
+            else:
+                result = cmd_dci_set_gate(
+                    args.project_dir,
+                    run_id=args.run_id,
+                    gate_name=args.gate_name,
+                    gate_value=gate_value,
+                )
+    elif args.atomic_write:
+        result = cmd_atomic_write(
+            args.project_dir,
+            actor=args.actor,
+            path=args.path,
+            value_str=args.value,
+            guard=args.guard,
+            append_list=args.append_list,
+        )
+    elif args.read:
         result = cmd_read(args.project_dir)
     elif args.init:
         result = cmd_init(args.project_dir, args.workflow_name, args.total_steps)
@@ -957,7 +1859,7 @@ def main():
     elif args.add_auto_approved is not None:
         result = cmd_add_auto_approved(args.project_dir, args.add_auto_approved)
     else:
-        result = {"valid": False, "error": "No command specified. Use --read, --init, --advance-step, --record-output, --update-pacs, --update-team, --set-status, --set-autopilot, or --add-auto-approved"}
+        result = {"valid": False, "error": "No command specified. Use --read, --init, --init-execution, --atomic-write, --advance-step, --record-output, --update-pacs, --update-team, --set-status, --set-autopilot, or --add-auto-approved"}
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

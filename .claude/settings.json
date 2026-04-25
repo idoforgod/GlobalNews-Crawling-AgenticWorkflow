@@ -75,6 +75,16 @@
         "hooks": [
           {
             "type": "command",
+            "command": "if test -f \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/scripts/block_sot_direct_edit.py; then python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/scripts/block_sot_direct_edit.py; fi",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
             "command": "if test -f \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/scripts/block_test_file_edit.py; then python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/scripts/block_test_file_edit.py; fi",
             "timeout": 10
           }
