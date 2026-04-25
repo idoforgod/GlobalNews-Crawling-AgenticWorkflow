@@ -1,11 +1,13 @@
 # GlobalNews — Global News Crawling & Big Data Analysis System
 # GlobalNews — 글로벌 뉴스 크롤링 & 빅데이터 분석 시스템
 
-> **112 international news sites · 14 languages · 4,200+ articles/day**
-> **8-stage NLP + 7-module insights + 18-Question BigData Engine + DCI 14-layer + Personal Newspaper**
+> **112 international news sites · 14 languages · ~4,200 articles/day**
+> **8-stage NLP · 7-module insights (M1-M7) · 18-Question BigData Engine · GTI · Signal Portfolio · Weekly Future Map**
+> **DCI 14-layer doctoral report · WF5 Personal Newspaper (135K words/day) · Public Narrative 3-Layer · Chart Interpretations · LLM Wiki auto-ingest**
 >
-> **112개 국제 뉴스 사이트 · 14개 언어 · 일일 4,200+ 기사 수집**
-> **8단계 NLP + 7모듈 통찰 + 18-Question 빅데이터 엔진 + DCI 14계층 + 나만의 신문 발행**
+> **112개 국제 뉴스 사이트 · 14개 언어 · 일일 약 4,200건 기사 수집**
+> **8단계 NLP · 7모듈 통찰(M1-M7) · 18-Question 빅데이터 엔진 · GTI 지정학 긴장 지수 · 신호 포트폴리오 · 주간 미래 맵**
+> **DCI 14계층 박사급 보고서 · WF5 나만의 신문(일 13.5만 단어) · 일반인 3계층 해석 · 차트 해석 · LLM Wiki 자동 ingest**
 
 | | EN | KO |
 |---|---|---|
