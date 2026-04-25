@@ -89,12 +89,12 @@ Tier 6: Claude Code 인터랙티브 분석으로 에스컬레이션
 
 **SiteDeadline Fairness Yield 패턴 (ADR-065~067)**:
 
-ThreadPoolExecutor(max_workers=5)에서 116개 사이트를 병렬 크롤링할 때, 한 사이트가 느리거나 차단되면 워커 스레드를 독점하여 다른 사이트의 크롤링이 지연된다. 이를 해결하기 위한 **협력적 공정성 메커니즘**:
+ThreadPoolExecutor(max_workers=5)에서 112개 사이트 (어댑터 123개)를 병렬 크롤링할 때, 한 사이트가 느리거나 차단되면 워커 스레드를 독점하여 다른 사이트의 크롤링이 지연된다. 이를 해결하기 위한 **협력적 공정성 메커니즘**:
 
 1. **SiteDeadline 할당**: 각 사이트에 동적 타임아웃(최대 900초) 기반 데드라인 할당
 2. **Fairness Yield**: 데드라인 만료 시 현재 워커를 양보(`break`) — 부분 결과 보존
 3. **재큐잉**: yield된 사이트는 다음 패스에서 새 데드라인과 함께 재시도
-4. **완료까지 반복**: `_get_incomplete_sites()` → `_run_single_pass()` 최대 `MULTI_PASS_MAX_EXTRA`(10)회 반복, 모든 116개 사이트 완료까지. 반복 후에도 미완료 사이트는 `crawl_exhausted_sites.json` 실패 리포트에 기록된다
+4. **완료까지 반복**: `_get_incomplete_sites()` → `_run_single_pass()` 최대 `MULTI_PASS_MAX_EXTRA`(10)회 반복, 모든 112개 사이트 (어댑터 123개) 완료까지. 반복 후에도 미완료 사이트는 `crawl_exhausted_sites.json` 실패 리포트에 기록된다
 
 **P1 `deadline_yielded` 플래그**: `CrawlResult.deadline_yielded: bool` 필드가 yield 시점에서 결정론적으로 `True`로 설정된다. 이 플래그는 3곳에서 할루시네이션을 봉쇄한다:
 
@@ -117,9 +117,9 @@ ThreadPoolExecutor(max_workers=5)에서 116개 사이트를 병렬 크롤링할 
 - **DynamicBypassEngine가 지능적으로 대응한다**: 차단 유형을 진단한 뒤 해당 유형에 최적화된 전략부터 시도
 - **24시간 안전 타임아웃**: 전체 파이프라인 수준의 안전망. 정상적으로는 도달하지 않지만, 치명적 hang 방지
 
-### 1.5 116개 사이트 — 왜 이 사이트들인가
+### 1.5 112개 사이트 (어댑터 123개) — 왜 이 사이트들인가
 
-116개 사이트는 10개 그룹(A-J)으로 조직된다:
+112개 사이트 (어댑터 123개)는 10개 그룹(A-J)으로 조직된다:
 
 | 그룹 | 지역 | 사이트 수 | 예시 |
 |------|------|----------|------|
@@ -146,7 +146,7 @@ ThreadPoolExecutor(max_workers=5)에서 116개 사이트를 병렬 크롤링할 
 
 **의도적으로 제외한 것들**: 소셜 미디어(X, Reddit — API 비용/TOS), 방송사 웹(KBS, MBC — 동영상 중심), 포털(네이버, 다음 — 재배포 기사 중복)
 
-**P1 사이트 레지스트리 동기화**: `validate_site_registry_sync.py`가 5개 하드코딩된 사이트 리스트(extract_site_urls, split_sites_by_group, validate_site_coverage, distribute_sites_to_teams, sources.yaml)를 교차 검증하여 도메인 정규화(6개 접두어 제거 + 2개 별칭 해소) 후 불일치를 탐지한다. 116개 사이트 간 desync는 silent failure의 근본 원인이다.
+**P1 사이트 레지스트리 동기화**: `validate_site_registry_sync.py`가 5개 하드코딩된 사이트 리스트(extract_site_urls, split_sites_by_group, validate_site_coverage, distribute_sites_to_teams, sources.yaml)를 교차 검증하여 도메인 정규화(6개 접두어 제거 + 2개 별칭 해소) 후 불일치를 탐지한다. 112개 사이트 (어댑터 123개) 간 desync는 silent failure의 근본 원인이다.
 
 ### 1.6 56개 분석 기법 — 왜 이렇게 많은가
 
@@ -224,120 +224,235 @@ data/
 
 ## 2. 시스템 아키텍처 (System Architecture)
 
-### 2.1 4-Layer 아키텍처
+### 2.1 7+ Layer 아키텍처 (2026-Q2 확장)
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      main.py (CLI)                          │
-│       crawl │ analyze │ full │ status │ insight              │
-├──────────────────┼──────────────────────────────────────────┤
-│                  │                                          │
-│   ┌──────────────▼──────────────┐                          │
-│   │  Layer 1: CRAWLING ENGINE   │                          │
-│   │  116 adapters + anti-block  │                          │
-│   │  → data/raw/YYYY-MM-DD/    │                          │
-│   └──────────────┬──────────────┘                          │
-│                  │ all_articles.jsonl                       │
-│   ┌──────────────▼──────────────┐                          │
-│   │  Layer 2: ANALYSIS PIPELINE │                          │
-│   │  8 stages, 56 techniques   │                          │
-│   │  → data/{processed,features,analysis}/                 │
-│   └──────────────┬──────────────┘                          │
-│                  │ Parquet files                            │
-│   ┌──────────────▼──────────────┐                          │
-│   │  Layer 3: STORAGE           │                          │
-│   │  Parquet ZSTD + SQLite FTS5 │                          │
-│   │  → data/output/YYYY-MM-DD/ │                          │
-│   └──────────────┬──────────────┘                          │
-│                  │                                          │
-│   ┌──────────────▼──────────────┐                          │
-│   │  Layer 4: PRESENTATION      │                          │
-│   │  Streamlit dashboard (6 tabs)│                          │
-│   │  + DuckDB/Pandas/FTS5 쿼리  │                          │
-│   └─────────────────────────────┘                          │
-│                                                             │
-│   [Shared] config/ │ utils/ │ constants.py                 │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   ┌─────────────────────────────┐                          │
-│   │  Layer 5: INSIGHT ANALYTICS │  ← Workflow B (독립)     │
-│   │  7 modules (M1-M7)         │                          │
-│   │  27 metrics, multi-date    │                          │
-│   │  ← data/{processed,features,analysis}/ (READ-ONLY)    │
-│   │  → data/insights/{run_id}/ │                          │
-│   └─────────────────────────────┘                          │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         main.py (CLI)                                │
+│      crawl │ analyze │ full │ status │ insight │ dci                 │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   ┌────────────────────────┐                                         │
+│   │ Layer 1: CRAWLING      │  112 enabled sites · 123 adapters       │
+│   │ pipeline + anti-block  │  4-Level retry · DynamicBypassEngine    │
+│   │ → data/raw/{date}/     │  Never-Abandon Multi-Pass               │
+│   └──────────┬─────────────┘                                         │
+│              │ all_articles.jsonl                                    │
+│   ┌──────────▼─────────────┐                                         │
+│   │ Layer 2: ANALYSIS      │  Stage 1-8 NLP, 56 techniques           │
+│   │ pipeline (8 stages)    │  → data/{processed,features,analysis}/  │
+│   └──────────┬─────────────┘                                         │
+│              │ Parquet                                               │
+│   ┌──────────▼─────────────┐                                         │
+│   │ Layer 3: STORAGE       │  Parquet ZSTD + SQLite FTS5 + sqlite-vec│
+│   │ → data/output/{date}/  │                                         │
+│   └──────────┬─────────────┘                                         │
+│              │                                                       │
+│   ┌──────────▼──────────────────────────────────────────────────┐    │
+│   │ Layer 4: BIGDATA ENGINE — POST-PROCESSING (Step 6.7)        │    │
+│   │  · articles_enriched_assembler   (35-field enriched parquet)│    │
+│   │  · geo_focus_extractor / source_metadata_joiner             │    │
+│   │  · steeps_classifier (8 cats incl. SPI Spirituality + CRS)  │    │
+│   │  · question_engine (18 forced-answer questions)             │    │
+│   │  · gti (Geopolitical Tension Index, 0-100)                  │    │
+│   │  · signal_portfolio (single SOT, lifecycle tracking)        │    │
+│   │  · weekly_future_map (7-day synthesis, EN+KO)               │    │
+│   │ → data/{enriched,answers,gti}/, data/signal_portfolio.yaml  │    │
+│   │ → reports/weekly_future_map/                                │    │
+│   └──────────┬──────────────────────────────────────────────────┘    │
+│              │                                                       │
+│   ┌──────────▼─────────────┐                                         │
+│   │ Layer 5: INSIGHT (B)   │  ← Workflow B (read-only on Layer 2)    │
+│   │ 7 modules (M1-M7)      │  27 metrics, multi-date window          │
+│   │ → data/insights/{id}/  │                                         │
+│   └──────────┬─────────────┘                                         │
+│              │                                                       │
+│   ┌──────────▼──────────────────────────────────────────────────┐    │
+│   │ Layer 6: NARRATIVE LAYERS                                    │   │
+│   │  · Public Narrative 3-Layer  (Step 6.5, ADR-080)             │   │
+│   │       reports/public/{date}/{interpretation,insight,future}  │   │
+│   │  · Chart Interpretations 6-tab (Step 6.6, ADR-082)           │   │
+│   │       data/analysis/{date}/interpretations.json              │   │
+│   │  · W4 Master / DCI appendix (Step 6.45a/b)                   │   │
+│   │  · @insight-narrator refinement (Step 6.4)                   │   │
+│   └──────────┬──────────────────────────────────────────────────┘    │
+│              │                                                       │
+│   ┌──────────▼──────────────────────────────────────────────────┐    │
+│   │ Layer 7: PUBLISHING — WF5 Personal Newspaper (Step 7, ADR-083)│  │
+│   │  17-agent editorial team (Chief + 6 continental + 6 STEEPS    │  │
+│   │  + 4 specialty); 15 editorial principles                      │  │
+│   │  → newspaper/daily/{date}/, newspaper/weekly/{week}/          │  │
+│   └───────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│   [Independent track] DCI — Deep Content Intelligence (--mode dci)   │
+│   ┌────────────────────────────────────────────────────────────┐     │
+│   │  L-1 → L11 (14 layers); SG-Superhuman 10-gate verification │     │
+│   │  CE4 3-layer evidence chain; 5-agent team (5조항 P1 DNA)   │     │
+│   │  ← data/raw/{date}/all_articles.jsonl  (no W2/W3 deps)     │     │
+│   │  → data/dci/runs/{run_id}/final_report.md                  │     │
+│   └────────────────────────────────────────────────────────────┘     │
+│                                                                      │
+│   [External hop] Step 6.8: LLM Wiki ingest (background)              │
+│       nohup auto-wiki-ingest.sh → llm-wiki-environmentscanning/      │
+│                                                                      │
+│   ┌──────────────────────────────────────────────────────────────┐   │
+│   │ Layer 8: PRESENTATION — 2 Streamlit apps + DuckDB/Pandas     │   │
+│   │  · dashboard.py (port 8501) — 6 tabs incl. 18 Questions      │   │
+│   │  · insights_dashboard.py (port 8502) — 8 tabs (M1-M7)        │   │
+│   │  · dashboard_insights.py — helper (no UI; deterministic)     │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│   [Shared] config/ │ utils/ │ constants.py                           │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-각 Layer의 경계는 **파일 시스템의 디렉터리**로 물리적으로 구분된다:
-- Layer 1 출력 → `data/raw/`
-- Layer 2 출력 → `data/processed/`, `data/features/`, `data/analysis/`
-- Layer 3 출력 → `data/output/`
-- Layer 4 입력 ← `data/output/`
-- Layer 5 입력 ← Layer 2 출력 (READ-ONLY), 출력 → `data/insights/`
+각 Layer의 경계는 **파일 시스템 디렉터리**로 물리적으로 구분된다 — 단일 디렉터리에 단일 producer가 쓴다 (절대 기준 2 SOT 준수). DCI는 W2/W3에 대한 **읽기 의존이 없는** 독립 워크플로우이며 (ADR-079), Layer 4 BigData Engine은 Layer 2 산출물을 read-only로 소비하여 Layer 6/7의 입력을 준비한다.
 
 ### 2.2 모듈 구조
 
 ```
-src/                              (~55,900 LOC — Workflow A ~48,800 + Workflow B ~7,100)
+src/                              (275 modules · ~80,733 LOC)
 ├── config/
-│   └── constants.py              350+ 상수: 경로, 임계값, 스키마
-├── crawling/                     크롤링 엔진 (17 모듈 + 116 어댑터)
-│   ├── pipeline.py               크롤링 오케스트레이터 + SiteDeadline + Multi-Pass (~1,200 lines)
-│   ├── network_guard.py          5-retry HTTP 클라이언트 (662 lines)
-│   ├── url_discovery.py          3-Tier URL 발견 (989 lines)
-│   ├── article_extractor.py      추출 체인 + 페이월 감지 (~1,400 lines)
-│   ├── browser_renderer.py       서브프로세스 기반 헤드리스 브라우저 렌더링 (~256 lines)
-│   ├── adaptive_extractor.py     4-stage CSS 선택자 적응형 추출 (~198 lines)
-│   ├── dedup.py                  3-Level 중복 제거 (916 lines)
-│   ├── anti_block.py             6-Tier 에스컬레이션 (~600 lines)
+│   └── constants.py              350+ 상수: 경로, 임계값, 스키마, ENABLED_DEFAULT, CRAWL_NEVER_ABANDON
+├── crawling/                     크롤링 엔진 + 123 어댑터 (~149 모듈)
+│   ├── pipeline.py               크롤링 오케스트레이터 + SiteDeadline + Multi-Pass
+│   ├── network_guard.py          5-retry HTTP 클라이언트
+│   ├── url_discovery.py          3-Tier URL 발견 (RSS · Sitemap · DOM) + KST→UTC 보정
+│   ├── article_extractor.py      추출 체인 + 페이월 감지 + html.unescape (HTML 엔티티 해제)
+│   ├── browser_renderer.py       서브프로세스 기반 Patchright/Playwright
+│   ├── adaptive_extractor.py     4-stage CSS 선택자 적응형 추출
+│   ├── dedup.py                  3-Level 중복 제거 (URL · Title Jaccard · SimHash)
+│   ├── anti_block.py             6-Tier 에스컬레이션
 │   ├── dynamic_bypass.py         DynamicBypassEngine — 12전략, 5-Tier, 7 BlockTypes
-│   ├── block_detector.py         7-type 차단 진단 (671 lines)
-│   ├── circuit_breaker.py        상태 머신 (~400 lines)
-│   ├── retry_manager.py          4-Level 재시도 + 12개 전략 + Never-Abandon 바운디드 루프 (~400 lines)
-│   ├── session_manager.py        쿠키/세션 생애주기 (821 lines)
-│   ├── ua_manager.py             61+ User-Agent 4-tier (942 lines)
-│   ├── crawler.py                ENABLED_DEFAULT SOT 소비자 — 사이트별 enabled 상태 런타임 판정
-│   ├── contracts.py              RawArticle + CrawlResult(deadline_yielded) 데이터 계약 (~190 lines)
-│   ├── crawl_report.py           사이트별 리포트 (~200 lines)
-│   └── adapters/                 116개 사이트별 어댑터
-│       ├── base_adapter.py       추상 기반 클래스 (450+ lines)
+│   ├── block_detector.py         7-type 차단 진단
+│   ├── circuit_breaker.py        상태 머신 (CLOSED → OPEN → HALF_OPEN)
+│   ├── retry_manager.py          4-Level 재시도 + 12개 ALTERNATIVE_STRATEGIES (D-7 동기화)
+│   ├── session_manager.py        쿠키/세션 생애주기
+│   ├── ua_manager.py             61+ User-Agent 4-tier
+│   ├── crawler.py                ENABLED_DEFAULT SOT 소비자 — 런타임 enabled 판정
+│   ├── contracts.py              RawArticle + CrawlResult(deadline_yielded) + source_domain 필드
+│   ├── crawl_report.py           사이트별 리포트
+│   └── adapters/                 123개 사이트별 어댑터
+│       ├── base_adapter.py       추상 기반 클래스
 │       ├── kr_major/             12: 조선, 중앙, 동아, 한겨레, 연합 등 (Groups A+B+C)
-│       ├── kr_tech/              10: Bloter, 전자신문, ZDNet, Insight 등 (Group D)
-│       ├── english/              22: NYT, FT, WSJ, CNN, Bloomberg, BBC 등 (Group E)
-│       └── multilingual/         77: AlJazeera, SCMP, Spiegel, Corriere 등 (Groups F-J)
-├── analysis/                     8단계 NLP 파이프라인
-│   ├── pipeline.py               분석 오케스트레이터 (1,096 lines)
-│   ├── stage1_preprocessing.py   전처리: Kiwi + spaCy (1,408 lines)
-│   ├── stage2_features.py        피처: SBERT + TF-IDF + NER (1,508 lines)
-│   ├── stage3_article_analysis.py 분석: 감성 + 감정 + STEEPS (1,726 lines)
-│   ├── stage4_aggregation.py     집계: BERTopic + HDBSCAN (2,175 lines)
-│   ├── stage5_timeseries.py      시계열: STL + PELT + Prophet (2,147 lines)
-│   ├── stage6_cross_analysis.py  교차: Granger + PCMCI (2,617 lines)
-│   ├── stage7_signals.py         신호: 5-Layer 분류 (2,180 lines)
-│   └── stage8_output.py          출력: Parquet + SQLite (810 lines)
+│       ├── kr_tech/              11: Bloter, 전자신문, ZDNet 등 (Group D)
+│       ├── english/              22: NYT, FT, WSJ, CNN, Bloomberg, BBC, TechCrunch, TheVerge,
+│       │                              Ars Technica, 404 Media 등 (Group E)
+│       └── multilingual/         78: AlJazeera, SCMP, Spiegel, Globaltimes, etc. (Groups F-J)
+│
+├── analysis/                     8단계 NLP + BigData Engine (20 모듈)
+│   ├── pipeline.py               분석 오케스트레이터 (Stage 1-8 + post-processing trigger)
+│   ├── stage1_preprocessing.py   전처리: Kiwi + spaCy
+│   ├── stage2_features.py        피처: SBERT + TF-IDF + NER (Davlan XLM-RoBERTa)
+│   ├── stage3_article_analysis.py 감성 + 감정 + STEEPS + DistilBART (3× 속도 향상)
+│   ├── stage4_aggregation.py     BERTopic + HDBSCAN + Louvain
+│   ├── stage5_timeseries.py      STL + PELT + Kleinberg + Prophet
+│   ├── stage6_cross_analysis.py  Granger + PCMCI + co-occurrence (betweenness 노이즈 98% 제거)
+│   ├── stage7_signals.py         5-Layer 신호 분류
+│   ├── stage8_output.py          Parquet + SQLite FTS5 + sqlite-vec
+│   │
+│   ├── articles_enriched_assembler.py  [BigData] 35-field articles_enriched.parquet
+│   ├── geo_focus_extractor.py          [BigData] source_country ≠ geo_focus 분리, 120개국
+│   ├── source_metadata_joiner.py       [BigData] source_tier(GLOBAL~NICHE) + ideology
+│   ├── steeps_classifier.py            [BigData] STEEPSS 8 카테고리 (SOC/TEC/ECO/ENV/POL/SEC/SPI/CRS)
+│   │                                   Hybrid: 키워드 Tier 1 (<1ms) → XLM-RoBERTa Tier 2 (150ms)
+│   ├── signal_classifier.py            [BigData] Layer A/B (BREAKING/TREND/WEAK_SIGNAL/NOISE)
+│   ├── question_engine.py              [BigData] 18-Question 강제 응답 엔진
+│   │                                   → data/answers/{date}/q01-q18.json + summary.json
+│   ├── gti.py                          [BigData] Geopolitical Tension Index (40·35·25 합성)
+│   │                                   → data/gti/{date}/gti_daily.json + gti_history.jsonl
+│   ├── signal_portfolio.py             [BigData] 신호 포트폴리오 단일 SOT (lifecycle 추적)
+│   │                                   → data/signal_portfolio.yaml
+│   └── weekly_future_map.py            [BigData] 7-day 종합 미래 맵 (EN + KO, pure Python)
+│                                       → reports/weekly_future_map/{YYYY-W##}/
+│
+├── insights/                     Workflow B: 빅데이터 통찰 분석 (12 모듈)
+│   ├── pipeline.py               통찰 오케스트레이터
+│   ├── window_assembler.py       다중 날짜 코퍼스 조립 + 지연 로딩
+│   ├── validators.py             P1 결정론적 검증 — 27개 지표 수학적 경계
+│   ├── constants.py              27개 지표 임계값 중앙화
+│   ├── m1_crosslingual.py        교차언어 정보 비대칭 (JSD, Wasserstein, filter-bubble)
+│   ├── m2_narrative.py           내러티브 & 프레이밍
+│   ├── m3_entity.py              엔티티 궤적 & 숨은 연결
+│   ├── m4_temporal.py            시간 패턴 & 캐스케이드
+│   ├── m5_geopolitical.py        지정학 분석 & BRI (414 pairs)
+│   ├── m6_economic.py            경제 인텔리전스 & EPU (12 langs)
+│   └── m7_synthesis.py           M7 Intelligence — entity_profiles, pair_tensions,
+│                                 evidence_articles, risk_alerts (4 Parquet)
+│
+├── dci/                          Deep Content Intelligence (61 모듈, ~10.3K LOC)
+│   ├── orchestrator.py           7-Phase 오케스트레이션
+│   ├── layers/                   14 layers (L-1 → L11):
+│   │   ├── l0_discourse.py        Kiwi + 다국어 regex + PDTB
+│   │   ├── l1_semantic.py         claims/quotes/numerical/CAMEO
+│   │   ├── l1_5_meaning.py        SPO + FrameNet-lite
+│   │   ├── l2_relations.py        Allen 13-relation + timex3 + hedging
+│   │   ├── l3_kg_hypergraph.py    NetworkX entity 공기 + community
+│   │   ├── l4_cross_document.py   SimHash + Jaccard thread clustering
+│   │   ├── l5_psycho_style.py     textstat + TTR/MTLD/HDD + Burrows Delta
+│   │   ├── l6_triadic.py          [Claude CLI] 4-lens (α/β/γ/δ-critic)
+│   │   ├── l6_checkpoint.py       L6 중간 체크포인트
+│   │   ├── l7_graph_of_thought.py 순수 Python Bayesian DAG
+│   │   ├── l8_monte_carlo.py      1,024-leaf scenario tree
+│   │   ├── l9_metacognitive.py    블라인드 스팟 + 불확실성 분해
+│   │   └── l10_final_report.py    [Claude CLI] Doctoral narrator + CE3 숫자 검증
+│   ├── ensemble/                 Claude CLI 클라이언트 + 재검증
+│   ├── verifiers/                NLI/Triadic/Critic 검증
+│   ├── evidence_ledger.py        CE4 3-layer evidence chain (article/segment/char)
+│   ├── failure_policy.py         14-layer 결정론 매트릭스
+│   ├── resume.py                 checkpoint schema v1
+│   └── sg_superhuman.py          10-gate 검증 엔진
+│
+├── newspaper/                    WF5 — Personal Newspaper (8 모듈, ADR-083)
+│   ├── prompt_builder.py         14-desk 프롬프트 조립
+│   ├── story_clusterer.py        스토리 클러스터링
+│   ├── organizers.py             Country/STEEPS 조직화
+│   ├── budget_adjuster.py        분량 ±20% 자동 조정
+│   ├── country_mapper.py         지역 → 대륙 매핑
+│   ├── entity_linker.py          엔티티 link
+│   ├── html_renderer.py          NYT-style HTML 렌더링
+│   ├── agent_prompts/            14-desk 프롬프트 템플릿
+│   └── templates/                HTML 템플릿
+│
+├── public_narrative/             3-Layer Public Narrative (ADR-080)
+│   ├── facts_extractor.py        facts_pool.json 생성 (단일 진실 원천)
+│   ├── narrator.py               Claude CLI prose 생성
+│   ├── validators.py             8 PUB 검증 (FKGL · jargon · number parity · 금지어 · EN↔KO)
+│   ├── glossary_simple.yaml      일반인 용어 사전
+│   └── templates/                3-Layer 템플릿
+│
+├── interpretations/              Chart Interpretations 6-tab (ADR-082)
+│   ├── facts_pool.py             탭별 facts pool
+│   ├── salient_facts.py          Salient fact 추출
+│   ├── baseline_builder.py       baseline 비교 데이터
+│   ├── future_linker.py          Future Outlook 카드 링킹
+│   ├── prompt_composer.py        Claude CLI 프롬프트 조립
+│   ├── validators.py             CI1-CI6 검증
+│   └── templates/                탭별 카드 템플릿
+│
+├── reports/                      후처리 보고서 (Step 6.45a/b)
+│   ├── w4_appendix.py            W4 Master Integration 부록
+│   └── dci_layer_summary.py      DCI 레이어 요약 부록
+│
 ├── storage/                      데이터 I/O
-│   ├── parquet_writer.py         ZSTD 압축 + 원자적 쓰기 (722 lines)
-│   └── sqlite_builder.py         FTS5 + vec 인덱스 (695 lines)
-├── insights/                     Workflow B: 빅데이터 통찰 분석 (§4.4, 12 모듈, ~7,100 LOC)
-│   ├── pipeline.py               통찰 오케스트레이터 (433 lines)
-│   ├── window_assembler.py       다중 날짜 코퍼스 조립 + 지연 로딩 (241 lines)
-│   ├── validators.py             P1 결정론적 검증 — 27개 지표 수학적 경계 (189 lines)
-│   ├── constants.py              27개 지표 임계값 중앙화 (202 lines)
-│   ├── m1_crosslingual.py        교차언어 정보 비대칭 (674 lines)
-│   ├── m2_narrative.py           내러티브 & 프레이밍 (1,181 lines)
-│   ├── m3_entity.py              엔티티 궤적 & 숨은 연결 (927 lines)
-│   ├── m4_temporal.py            시간 패턴 & 캐스케이드 (932 lines)
-│   ├── m5_geopolitical.py        지정학 분석 & BRI (999 lines)
-│   ├── m6_economic.py            경제 인텔리전스 & EPU (950 lines)
-│   └── m7_synthesis.py           종합 보고서 생성 (353 lines)
+│   ├── parquet_writer.py         ZSTD 압축 + 원자적 쓰기
+│   └── sqlite_builder.py         FTS5 + vec 인덱스
+│
 └── utils/                        유틸리티
     ├── logging_config.py         구조화 로깅
     ├── config_loader.py          YAML 로딩 + 검증
     ├── error_handler.py          예외 계층 + 재시도 데코레이터
-    └── self_recovery.py          자기 복구 메커니즘
+    └── self_recovery.py          자기 복구 메커니즘 + 잠금 관리
 ```
+
+**루트 진입점**:
+- `main.py` (874 lines) — CLI: 6개 모드 (crawl · analyze · full · status · insight · dci)
+- `dashboard.py` (2,319 lines) — 종합 Streamlit 대시보드 (6 tabs incl. 18 Questions)
+- `dashboard_insights.py` (1,222 lines) — Helper 모듈 (LLM 미사용 결정론적 인사이트 카드)
+- `insights_dashboard.py` (758 lines) — Workflow B 전용 Streamlit (8 tabs M1-M7)
+- `repair-pipeline.py` — 파이프라인 복구 보조 스크립트
+
+**테스트 인벤토리**: `tests/` 109 파일, ~41,524 LOC.
 
 ---
 
@@ -346,7 +461,7 @@ src/                              (~55,900 LOC — Workflow A ~48,800 + Workflow
 ### 3.1 크롤링 파이프라인 흐름
 
 ```
-sources.yaml (116 sites)
+sources.yaml (112 enabled sites)
        │
        ▼
 ┌──────────────────────────────────────────────────┐
@@ -399,7 +514,7 @@ sources.yaml (116 sites)
 
 ### 3.2 사이트 어댑터 시스템
 
-**설계 철학**: 116개 사이트는 DOM 구조, 인코딩, 페이월, 차단 방식이 모두 다르다. 범용 크롤러로는 높은 수집률을 달성할 수 없다. 따라서 **사이트마다 전용 어댑터**를 구현하되, **공통 로직은 기반 클래스에 집중**시킨다.
+**설계 철학**: 112개 사이트 (어댑터 123개)는 DOM 구조, 인코딩, 페이월, 차단 방식이 모두 다르다. 범용 크롤러로는 높은 수집률을 달성할 수 없다. 따라서 **사이트마다 전용 어댑터**를 구현하되, **공통 로직은 기반 클래스에 집중**시킨다.
 
 **기반 클래스** `BaseSiteAdapter` (450+ lines)가 제공하는 것:
 - URL 발견 (RSS/Sitemap/DOM) 공통 로직
@@ -1026,7 +1141,7 @@ crawl_status     -- site_id + crawl_date + count    — 크롤링 현황
 
 ## 7. 설정 시스템
 
-### 7.1 sources.yaml (116개 사이트)
+### 7.1 sources.yaml (112개 사이트 (어댑터 123개))
 
 각 사이트 설정: meta (name, url, language, group, enabled, difficulty_tier), crawl (primary_method, rss_urls, sections, rate_limit_seconds, ua_tier, anti_block_tier), selectors (title_css, body_css, date_css), paywall (type)
 
@@ -1149,7 +1264,7 @@ pytest -m "not slow"        # NLP 모델 로딩 제외 (빠른 실행)
 | tech-validation-team | dep-validator, nlp-benchmarker, memory-profiler | 기술 검증 |
 | crawl-strategy-team | 4개 지역별 전략가 | 크롤링 전략 수립 |
 | crawl-engine-team | crawler-core-dev, anti-block-dev, dedup-dev, ua-rotation-dev | 크롤링 엔진 구현 |
-| site-adapters-team | 4개 어댑터 개발자 | 116개 사이트 어댑터 |
+| site-adapters-team | 4개 어댑터 개발자 | 112개 사이트 (어댑터 123개) 어댑터 |
 | analysis-foundation-team | preprocessing-dev, feature-extraction-dev, article-analysis-dev, aggregation-dev | Stage 1-4 구현 |
 | analysis-signal-team | timeseries-dev, cross-analysis-dev, signal-classifier-dev, storage-dev | Stage 5-8 구현 |
 
@@ -1170,23 +1285,164 @@ pytest -m "not slow"        # NLP 모델 로딩 제외 (빠른 실행)
 | ADR-054~057 | 페이월 바이패스 시스템 (BrowserRenderer + AdaptiveExtractor + is_paywall_body) | 하드 페이월 5곳 대응 |
 | ADR-060~063 | 44→121→116 사이트 확장 + DynamicBypassEngine + P1 레지스트리 검증 | 크롤링 커버리지 확대 |
 | ADR-064 | D-7 Instance 13: ENABLED_DEFAULT SOT 중앙화 + AST 교차 검증(ED1-ED7) + `validate_enabled_default_sync.py` P1 스크립트 + `crawler.py` SOT 소비자 추가 | 사이트 활성화 상태 불일치 근절 |
-| ADR-065~067 | SiteDeadline Fairness Yield + P1 `deadline_yielded` 플래그 + CRAWL_NEVER_ABANDON Multi-Pass + CrawlState-first 완료 판정 + MAX_ARTICLES 1000→5000 | **크롤링 절대 원칙 실현** — 116개 사이트 완벽한 크롤링 완수 보장 |
-| Post-ADR-067 | Bypass Discovery Fallback + Producer-Consumer 계약 정합 + P1 로그 포맷 봉쇄 + `무한 while-loop` → 바운디드 `MULTI_PASS_MAX_EXTRA=10` 루프 + `crawl_exhausted_sites.json` 실패 리포트 + `check_crawl_progress.py` SOT 재사용(config_loader, constants.py 임포트) | P1 할루시네이션 봉쇄 — 하드코딩·로직 중복 근절 |
-| Workflow B | 빅데이터 통찰 분석 파이프라인 (7개 모듈 M1-M7, 27개 지표). `src/insights/` 완전 독립 모듈 (7,092 LOC). Stage 1-4 Parquet 읽기 전용 소비. Producer-Consumer 디커플링. `main.py --mode insight` CLI 인터페이스 | 듀얼 워크플로우 아키텍처 — 일일 신호 탐지(A) + 구조적 통찰(B) |
+| ADR-065~067 | SiteDeadline Fairness Yield + P1 `deadline_yielded` 플래그 + CRAWL_NEVER_ABANDON Multi-Pass + CrawlState-first 완료 판정 + MAX_ARTICLES 1000→5000 | **크롤링 절대 원칙 실현** — 112개 사이트 완벽한 크롤링 완수 보장 |
+| Post-ADR-067 | Bypass Discovery Fallback + Producer-Consumer 계약 정합 + P1 로그 포맷 봉쇄 + 바운디드 `MULTI_PASS_MAX_EXTRA=10` 루프 + `crawl_exhausted_sites.json` 실패 리포트 | P1 할루시네이션 봉쇄 — 하드코딩·로직 중복 근절 |
+| Workflow B | 빅데이터 통찰 분석 파이프라인 (M1-M7, 27개 지표). `src/insights/` 완전 독립 모듈 | 듀얼 워크플로우 — 일일 신호(A) + 구조적 통찰(B) |
+| ADR-071·072·079 | DCI 14-layer 독립 워크플로우 + SG-Superhuman 10-gate + 5조항 P1 DNA + `--mode dci` CLI | W4와 직교하는 박사급 deep-content 트랙 |
+| ADR-080 | Public Narrative 3-Layer (해석·통찰·미래) + 8 PUB 검증 (FKGL · jargon · number parity · 금지어) | 일반인 해석 자동 생성 (Step 6.5) |
+| ADR-081 | `run_daily.sh` cron 내러티브 체인 — Step 6.3/6.4 (W2/W3 narrators), 6.45a/b (Master·DCI appendix) | 매일 사람-읽기 보고서 자동 생성 |
+| ADR-082 | Chart Interpretations 6-tab — 대시보드 탭별 🌱 해석 / 💡 인사이트 / 🔮 미래통찰 카드 | 대시보드 인지 부담 감소 |
+| ADR-083 | WF5 Personal Newspaper — 17-agent editorial team, 15 편집 원칙, 13.5만/20.5만 단어 일/주간판. PIPELINE_TIMEOUT 4h→8h | 매일 NYT-style HTML 신문 자동 발행 |
+| BigData Engine (Step 6.7) | 9 신규 모듈 — `articles_enriched_assembler`, `geo_focus_extractor`, `source_metadata_joiner`, `steeps_classifier`(SPI+CRS 추가), `signal_classifier`, `question_engine`(18문 강제 응답), `gti`(40·35·25 합성), `signal_portfolio`(단일 SOT lifecycle), `weekly_future_map`(7-day 종합) | 매일 18개 미래연구 질문 강제 응답 + GTI 시계열 + 신호 포트폴리오 |
+| Step 6.8 | LLM Wiki 자동 ingest — BigData Engine 완료 후 `auto-wiki-ingest.sh` 백그라운드 호출 | 외부 LLM Wiki 저장소 자동 동기화 |
+| Crawling Quality 3-fix | (1) HTML 엔티티 unescape `html.unescape` (2) KST→UTC regex 보정 (3) `source_domain` 필드 추가 | 데이터 무결성 확보 |
 
-### 12.4 구축 규모
+### 12.4 구축 규모 (현재)
 
 | 지표 | 값 |
 |------|-----|
-| 소스 코드 | ~55,900 LOC (src/ — Workflow A ~48,800 + Workflow B ~7,100) |
-| 테스트 코드 | ~24,700 LOC (tests/) |
-| 총 코드 | ~73,500 LOC |
-| Python 모듈 | 171개 |
-| 테스트 파일 | 55개 |
-| 테스트 케이스 | ~2,588개 |
-| 서브에이전트 | 32개 (도메인) + 3개 (프레임워크) |
-| 에이전트 팀 | 6개 |
+| 소스 코드 | **~80,733 LOC** (src/, 275 모듈) |
+| 테스트 코드 | **~41,524 LOC** (tests/, 109 파일) |
+| 총 코드 | **~122,257 LOC** |
+| Python 모듈 | **275개** |
+| 크롤링 어댑터 | **123개** (kr_major 12 + kr_tech 11 + english 22 + multilingual 78) |
+| 활성 사이트 | **112개** (sources.yaml `enabled:true`) |
+| DCI 레이어 | **14개** (L-1 → L11, 13 구현 + L11 dashboard) |
+| 서브에이전트 | **107개** (.claude/agents/) |
+| 슬래시 커맨드 | **18개** (.claude/commands/) |
+| 로컬 스킬 | **6개** (.claude/skills/: workflow-generator, skill-creator, subagent-creator, crawl-master, doctoral-writing, insight-report) |
+| 훅 스크립트 | **42개** (.claude/hooks/scripts/, P1 검증 + 안전 + 컨텍스트) |
 | 워크플로우 단계 | 20 (Research 4 + Planning 4 + Implementation 12) |
+| ADR | ADR-001 → **ADR-083+** |
+
+---
+
+## 12.5 BigData Engine 아키텍처 (`scripts/run_daily.sh` Step 6.7)
+
+`main.py --mode full` 본체가 끝난 후 실행되는 **Layer 4 후처리 파이프라인**. 9개 모듈이 순차 실행되어 W2 산출물을 enrich → 18개 미래연구 질문 강제 응답 → GTI 산출 → 신호 포트폴리오 갱신 → 주간 미래 맵 합성한다.
+
+### 12.5.1 데이터 흐름
+
+```
+data/output/{date}/analysis.parquet (Stage 8 산출물)
+         │
+         ▼ articles_enriched_assembler.py
+data/enriched/{date}/articles_enriched.parquet (35 fields:
+   url · title · body · STEEPSS · sentiment · embedding · NER ·
+   source_country · geo_focus(120 countries) · source_tier · ideology · ...)
+         │
+         ▼ question_engine.py (18 questions, forced answer)
+data/answers/{date}/q01.json … q18.json + summary.json
+         │              ↓
+         │              status: 'ok' | 'degraded' | 'insufficient_data'
+         │              (file presence is unbreakable contract)
+         │
+         ▼ gti.py
+data/gti/{date}/gti_daily.json + data/gti/gti_history.jsonl
+   GTI = 40%·G1(Q05) + 35%·G2(Q06) + 25%·G3(Q07), 0-100
+         │
+         ▼ signal_portfolio.py
+data/signal_portfolio.yaml (단일 SOT, 단일 writer, lifecycle:
+   CANDIDATE → ACTIVE → CONFIRMED → ARCHIVED)
+         │
+         ▼ weekly_future_map.py (every Sunday or N-day rollup)
+reports/weekly_future_map/{YYYY-W##}/future_map.md (+ .ko.md)
+```
+
+### 12.5.2 18개 질문 정의 위치
+
+전체 18개 질문 정의는 `src/analysis/question_engine.py` line 287~1441. 카테고리:
+- **버스트·트렌드** (Q01-Q03): 시간적 변화점
+- **언어·국가** (Q04-Q06): 교차언어 프레이밍, 국가 감성, dark corners
+- **양국·약신호** (Q07-Q09): 양국 긴장, 약한 신호, 패러다임 전조
+- **의제 이동** (Q10-Q14): fringe→mainstream, 의제 선점, 이념·언어·매체 격차
+- **인과·클러스터** (Q15-Q18): 감성-경제 선행, 이슈 인과 연쇄, 동시 클러스터, 엔티티 중심성
+
+### 12.5.3 P1 보장 — 18문 계약의 결정론
+
+`question_engine.py`는 입력 데이터가 부족해도 **18개 파일을 모두 생성**한다. 데이터 부족 시 `status:'insufficient_data'`로 응답. 이로써 다운스트림(대시보드 Tab 5, Wiki ingest, Weekly Future Map)이 파일 부재 분기를 가질 필요가 없다.
+
+### 12.5.4 STEEPSS 분류 — SPI(영성) + CRS(위기) 추가
+
+`steeps_classifier.py`는 기존 6 카테고리(STEEP+S=Security)에 **SPI(Spirituality)** 와 **CRS(Crisis)** 를 추가하여 8 카테고리 분류한다.
+- SPI: 종교·영성·가치관 — 기존엔 POL/SOC로 흡수되어 패러다임 전환 신호 소실
+- CRS: 위기·재난 — 기존 카테고리로는 분리 불가능한 별도 시간 패턴
+
+Hybrid 추론: 키워드 Tier 1 (<1ms, 80% 커버) → 모호한 경우 XLM-RoBERTa Tier 2 (150ms).
+
+---
+
+## 12.6 DCI 아키텍처 (Independent Workflow, ADR-079)
+
+DCI는 **W1→W2→W3→W4 체인과 의존성이 없는** 독립 워크플로우이다. 입력은 오직 `data/raw/{date}/all_articles.jsonl`. 14개 레이어(L-1 → L11)를 순차 실행하여 박사급 보고서 (`final_report.md`)를 생산한다.
+
+### 12.6.1 7-Phase Agent Workflow
+
+| Phase | 역할 | 기술 |
+|-------|------|------|
+| 1 Preflight | 8 checks (corpus, 모델, DCI_ENABLED, SG 임계값) | Python CLI only (`validate_dci_preflight.py`) |
+| 2 Structural | L-1 → L2 레이어 실행 | Python subprocess, 순차 |
+| 3 Graph & Style | L3 → L5 레이어 실행 | Python subprocess |
+| 4 Reasoning | L6 Triadic + L7 GoT + L8 MC + L9 Metacog | L6만 LLM-essential, 나머지 Python |
+| 5 Narrator | L10 Doctoral report | Claude CLI + CE3 Python 재검증 |
+| 6 Review | 3-reviewer Agent Team (SG, Evidence, Narrative) | **유일한 Agent Team — 독립성 필수** |
+| 7 Reporting | Executive summary + Korean translation | Python CLI + `@translator` |
+
+**에이전트 5개**: `@dci-execution-orchestrator` (단일 SOT writer) + `@dci-sg-superhuman-auditor`, `@dci-evidence-auditor`, `@dci-narrative-reviewer` (Phase 6 Team) + `@translator` (재사용). Preflight·Reporter는 의도적으로 **Python CLI로 대체** — LLM 할루시네이션 원천봉쇄.
+
+### 12.6.2 SG-Superhuman 10-Gate
+
+모든 DCI run은 다음 게이트를 통과해야 PASS (Python 결정론):
+
+| Gate | 기준 | 의미 |
+|------|------|------|
+| G1 | `char_coverage = 1.00` | 본문 전수 진입 |
+| G2 | `triple_lens_coverage ≥ 3.0` | 문자당 평균 3+ 렌즈 참조 |
+| G3 | `llm_body_injection_ratio = 1.00` | L6에 본문 100% 투입 |
+| G4 | `technique_completeness = 93/93` | 모드별 준수 |
+| G5 | `nli_verification_pass_rate ≥ 0.95` | DeBERTa-v3-MNLI |
+| G6 | `triadic_consensus_rate ≥ 0.60` | productive-disagreement band |
+| G7 | `adversarial_critic_pass ≥ 0.90` | Critic JSON parse |
+| G8 | `evidence_3layer_complete = 100%` | CE4 article/segment/char |
+| G9 | `technique_mode_compliance = 100%` | Registry vs trace |
+| G10 | `uncertainty_quantified = 100%` | L7/L8/L9 artifacts presence |
+
+### 12.6.3 5조항 P1 Hallucination Prevention DNA
+
+모든 DCI 에이전트가 상속:
+
+1. NEVER recompute any number. Python validators produce all metrics.
+2. NEVER invent `[ev:xxx]` markers. Only reference markers already in `evidence_ledger.jsonl`.
+3. NEVER declare PASS/FAIL for objective criteria. Read exit code from `validate_dci_*.py`.
+4. Quote numbers verbatim from Python CLI JSON output.
+5. Subjective judgment is permitted ONLY for: doctoral prose quality, semantic coherence, narrative framing, failure pattern diagnosis.
+
+상세: `prompt/execution-workflows/dci.md`.
+
+---
+
+## 12.7 WF5 Personal Newspaper 아키텍처 (ADR-083)
+
+### 12.7.1 17-Agent Editorial Team
+
+| 그룹 | 에이전트 | 역할 |
+|------|---------|------|
+| Lead | `@newspaper-chief-editor` | 14-desk 오케스트레이션, 헤드라인 에세이, 사설, 심층 분석, 단일 SOT writer |
+| Continental Desks (6) | `@desk-{africa, asia, europe, north-america, oceania, south-america}` | 대륙별 3,000-6,000 단어 섹션, P5 3-Tier ranking |
+| STEEPS Section Desks (6) | `@section-{political, economic, social, technology, environmental, security}` | 대륙 횡단 주제 섹션 3,500-5,000 단어 |
+| Specialty (4) | `@dark-corner-scout`, `@fact-triangulator`, `@future-outlook-writer`, `@newspaper-copy-editor` | dark corners 6,000 단어 / triangulation 1,000 / future outlook 12,000 / Phase 6 카피 에디팅 |
+
+### 12.7.2 15 편집 원칙
+
+P1 완전 지리 커버리지 · P2 Balance Code (30% 상한) · P3 계층 일관성 · P4 고정 분량(±20%) · P5 3-Tier (global/local/weak_signal) · P6 Source Triangulation · P7 STEEPS 균형 · P8 CE4 증거 · P9 Fact/Context/Opinion 분리 · P10 Confidence Level · P11 한국어 일차 · P12 미래학자 관점 · P13 Dark Corners · P14 No Clickbait · P15 No Single-Source · P16 No Algorithmic Amplification.
+
+### 12.7.3 발행 주기 + SOT
+
+- 일간: 매일 `run_daily.sh` Step 7. ~135,000 단어 (≈9시간 읽기). `newspaper/daily/{date}/index.html`.
+- 주간: 일요일 Step 7b, ≥4 일간판 누적 시. ~205,000 단어. `newspaper/weekly/{YYYY-W##}/`.
+- SOT: `execution.runs.{id}.workflows.newspaper.*` canonical. `newspaper` actor 신설.
+
+검증: `validate_newspaper.py` NP1-NP12.
 
 ---
 
@@ -1194,9 +1450,16 @@ pytest -m "not slow"        # NLP 모델 로딩 제외 (빠른 실행)
 
 | 문서 | 내용 |
 |------|------|
-| [GLOBALNEWS-README.md](GLOBALNEWS-README.md) | 시스템 개요, 빠른 시작, 실행 결과 |
-| [GLOBALNEWS-USER-MANUAL.md](GLOBALNEWS-USER-MANUAL.md) | 일상 운영 가이드 |
+| [README.md](README.md) | 영한 병기 시스템 개요, 빠른 시작 |
+| [GLOBALNEWS-USER-MANUAL.md](GLOBALNEWS-USER-MANUAL.md) | 일상 운영 가이드 (CLI · 대시보드 · 18문 · DCI · WF5) |
+| [GLOBALNEWS-EXECUTION-WORKFLOWS.md](GLOBALNEWS-EXECUTION-WORKFLOWS.md) | W1/W2/W3/W4/DCI/WF5 실행 프로토콜 |
+| [GLOBALNEWS-EVIDENCE-CHAIN.md](GLOBALNEWS-EVIDENCE-CHAIN.md) | CE3 / CE4 evidence chain 의미론 |
+| [GLOBALNEWS-SEMANTIC-GATES.md](GLOBALNEWS-SEMANTIC-GATES.md) | SG1-SG3 + SG-Superhuman 게이트 |
+| [GLOBALNEWS-P1-EXTENSIONS.md](GLOBALNEWS-P1-EXTENSIONS.md) | P1 할루시네이션 봉쇄 확장 |
 | [prompt/workflow.md](prompt/workflow.md) | 20단계 워크플로우 설계도 (구축 과정 기록) |
-| [config/sources.yaml](config/sources.yaml) | 116개 사이트 설정 |
-| [research/bigdata-insight-workflow-design.md](research/bigdata-insight-workflow-design.md) | Workflow B 설계 문서 (M1-M7, 27개 지표) |
+| [prompt/execution-workflows/dci.md](prompt/execution-workflows/dci.md) | DCI 7-Phase protocol 상세 |
+| [data/config/sources.yaml](data/config/sources.yaml) | 112개 활성 사이트 설정 (어댑터 123개) |
+| [data/config/insights.yaml](data/config/insights.yaml) | Workflow B + 경보 임계값 |
+| [DECISION-LOG.md](DECISION-LOG.md) | ADR-001 → ADR-083+ |
+| [GLOBALNEWS-README.md](GLOBALNEWS-README.md) | (Legacy) 시스템 개요 — 신규 README.md가 정본 |
 | [AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md](AGENTICWORKFLOW-ARCHITECTURE-AND-PHILOSOPHY.md) | 부모 프레임워크 아키텍처 |

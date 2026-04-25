@@ -8,10 +8,11 @@
 | 항목 | 내용 |
 |------|------|
 | **대상** | 이 시스템을 운영하는 연구자, 미래학자, 데이터 분석가 |
-| **시스템 상태** | Production-Ready — Dual Workflow (A: 수집+분석, B: 통찰+인텔리전스) |
-| **하드웨어** | MacBook M2 Pro, 128GB RAM |
-| **핵심 산출물** | Parquet + SQLite + 증거 기반 미래 인텔리전스 (경보 포함) |
-| **일일 성과** | 4,230건 수집, 8단계 분석, 7모듈 통찰, 리스크 경보 자동 생성 |
+| **시스템 상태** | Production-Ready — 통합 워크플로우 (A: 수집+분석, B: 통찰+인텔리전스, BigData Engine: 18문+GTI+Portfolio, DCI: 14계층 박사급 보고서, WF5: 나만의 신문, Public Narrative: 3계층 일반인 해석) |
+| **하드웨어** | MacBook M2 Pro, 128GB RAM (16GB 환경에서도 단계별 실행 가능) |
+| **핵심 산출물** | Parquet + SQLite (FTS5+vec) · 18-Q 답변 · GTI 시계열 · 신호 포트폴리오 · 3계층 일반인 해석 · 차트 해석 · NYT 스타일 HTML 신문(13.5만 단어) · DCI 박사급 보고서 |
+| **일일 성과** | 4,200+건 수집 · 8단계 분석 · 7모듈 통찰 · 18문 응답 · GTI 산출 · 리스크 경보 · 일간 신문 발행 · LLM Wiki 자동 ingest |
+| **코드 규모** | src 275 모듈(~80.7K LOC) · tests 109 파일(~41.5K LOC) · 어댑터 123개 · 서브에이전트 107개 · 슬래시 18개 · 로컬 스킬 6개 · 훅 42개 |
 
 ---
 
@@ -43,12 +44,35 @@ Claude Code에서 이 프로젝트를 열고, **"시작하자"** (또는 "start"
 
 | 말하면 | 실행되는 것 | 설명 |
 |--------|-----------|------|
-| "시작하자", "시작" | `/run` (full mode) | 전체 파이프라인 (크롤링+분석) |
+| "시작하자", "시작" | `/run` (full mode) | 전체 파이프라인 (크롤링+분석+자동 인사이트 체인) |
 | "크롤링 해줘", "뉴스 수집" | `/run` (crawl mode) | 크롤링만 |
 | "분석 시작", "빅데이터 분석" | `/run` (analyze mode) | 분석만 (기존 데이터 필요) |
-| "통찰 분석", "인사이트" | `/run` (insight mode) | Workflow B (7모듈 통찰) |
+| "통찰 분석", "인사이트" | `/run` (insight mode) | Workflow B (M1-M7 통찰) |
+| "DCI 실행", "심층 분석 시작" | `/run-dci-only` | DCI 14계층 독립 워크플로우 |
+| "신문 만들어줘" | `/run-newspaper-only` | WF5 일간판 발행 (~135K 단어) |
+| "주간 신문" | `/run-newspaper-weekly` | WF5 주간판 발행 (일요일, ≥4 일간판) |
+| "일반인 해석" | `/generate-public-layers` | 3계층 Public Narrative 생성 |
+| "차트 해석" | `/generate-chart-interpretations` | 6탭 차트 해석 카드 생성 |
 | "상태 확인", "결과 확인" | `main.py --mode status` | 현재 상태 조회 |
 | "다음 단계", "계속" | 자동 판별 | 현재 상태에 따라 라우팅 |
+
+### 슬래시 커맨드 18개
+
+| 카테고리 | 커맨드 | 용도 |
+|---------|--------|------|
+| **실행** | `/run` | `main.py` 직접 실행 (cron이 호출) |
+| | `/run-chain` | W1→W2→W3→W4 에이전트 오케스트레이션 |
+| | `/run-crawl-only`, `/run-analyze-only`, `/run-insight-only` | 단계별 실행 |
+| | `/run-dci-only` | DCI 독립 워크플로우 |
+| | `/run-newspaper-only`, `/run-newspaper-weekly` | WF5 신문 발행 |
+| **보고서** | `/generate-public-layers` | 3계층 Public Narrative |
+| | `/generate-chart-interpretations` | 차트 해석 카드 |
+| **통합·검토** | `/integrate-results` | W4 Master Integration |
+| | `/approve-report` | 후보 보고서 승인 → final 승격 |
+| | `/review-research`, `/review-architecture`, `/review-final` | 단계별 리뷰 게이트 |
+| **인프라** | `/start` | 워크플로우 상태 기반 자동 분기 |
+| | `/install` | 인프라 검증 |
+| | `/maintenance` | 주기적 건강 검진 |
 
 ### 실행 결과 예시
 
@@ -92,6 +116,25 @@ M7: Synthesis          핵심 발견 + 증거 기반 인텔리전스
     └── 리스크 경보 (임계점 자동 판정)
 ───────────────────────────────────────────────
 ```
+
+### 일일 파이프라인 — `scripts/run_daily.sh`의 7단계 후처리 (Step 6.x ~ 7b)
+
+`main.py --mode full` 본체(Step 4) 실행 후, 7개 후처리 단계가 자동으로 연쇄 실행된다. 각 단계는 **idempotent + fail-soft**(실패해도 다음 단계 차단 없음).
+
+| Step | 동작 | 호출 대상 | 출력 |
+|------|------|---------|------|
+| 6.3 | W2 분석 리포트 | `@analysis-reporter` (Claude CLI) | `workflows/analysis/outputs/analysis-report-{date}.md` |
+| 6.4 | W3 인사이트 정제 | `@insight-narrator` | `data/insights/{run_id}/synthesis/insight_report.md` |
+| 6.45a | W4 Master 부록 | `src.reports.w4_appendix` | `reports/final/integrated-report-{date}.md` |
+| 6.45b | DCI 레이어 요약 | `src.reports.dci_layer_summary` | `data/dci/runs/{id}/final_report.md` (append) |
+| 6.5 | Public Narrative 3계층 (ADR-080) | `generate_public_layers.py` | `reports/public/{date}/{interpretation,insight,future}.md` |
+| 6.6 | Chart Interpretations 6탭 (ADR-082) | `scripts/reports/generate_chart_interpretations.py` | `data/analysis/{date}/interpretations.json` |
+| 6.7 | **BigData Engine** (Enriched · 18문 · GTI · Portfolio · WeeklyMap) | `src.analysis.{question_engine,gti,signal_portfolio,weekly_future_map}` | `data/enriched/`, `data/answers/`, `data/gti/`, `data/signal_portfolio.yaml`, `reports/weekly_future_map/` |
+| 6.8 | **LLM Wiki 자동 ingest** (백그라운드, BigData 완료 후) | `llm-wiki-environmentscanning/scripts/auto-wiki-ingest.sh` | 외부 Wiki 저장소 동기화 |
+| 7 | WF5 Personal Newspaper 일간판 (ADR-083) | 14-desk Agent Team | `newspaper/daily/{date}/index.html` (~135K 단어) |
+| 7b | WF5 주간판 (일요일, ≥4 일간판) | 동일 | `newspaper/weekly/{YYYY-W##}/` |
+
+> **타임아웃**: `PIPELINE_TIMEOUT=28800`(8시간). WF5 추가에 따라 4h → 8h로 확장됨 (ADR-083).
 
 ---
 
@@ -290,9 +333,11 @@ python3 main.py --mode <MODE> [OPTIONS]
 
 | 모드 | 설명 | 예시 |
 |------|------|------|
-| `crawl` | 뉴스 크롤링만 실행 | `python3 main.py --mode crawl --date 2026-02-27` |
-| `analyze` | 분석 파이프라인만 실행 | `python3 main.py --mode analyze --all-stages` |
-| `full` | 크롤링 + 분석 전체 실행 | `python3 main.py --mode full --date 2026-02-27` |
+| `crawl` | 뉴스 크롤링만 실행 | `python3 main.py --mode crawl --date 2026-04-25` |
+| `analyze` | 8단계 분석만 실행 | `python3 main.py --mode analyze --all-stages` |
+| `full` | 크롤링 + 분석 + 자동 인사이트 체인 (`--skip-insight`로 비활성화) | `python3 main.py --mode full --date 2026-04-25` |
+| `insight` | Workflow B (M1-M7) 윈도우 분석 | `python3 main.py --mode insight --window 30 --end-date 2026-04-25` |
+| `dci` | DCI 14계층 독립 워크플로우 | `python3 main.py --mode dci --date 2026-04-25` |
 | `status` | 시스템 상태 확인 | `python3 main.py --mode status` |
 
 ### 2.3 옵션
@@ -306,6 +351,11 @@ python3 main.py --mode <MODE> [OPTIONS]
 | `--all-stages` | 전체 8스테이지 실행 | - |
 | `--dry-run` | 설정 검증만 (실제 실행 안 함) | - |
 | `--log-level` | 로그 레벨 (DEBUG/INFO/WARNING/ERROR) | INFO |
+| `--window N` | 인사이트 윈도우 일수 (`--mode insight` 전용) | 30 |
+| `--end-date YYYY-MM-DD` | 인사이트 윈도우 종료일 | 오늘 |
+| `--module M1_crosslingual` | 특정 인사이트 모듈만 실행 | 전체 7개 |
+| `--skip-insight` | `--mode full`에서 자동 인사이트 체인 비활성화 | False |
+| `--run-id dci-...` | DCI run id (`--mode dci` 전용) | `dci-{date}-{HHMM}` |
 
 ### 2.4 실행 예시
 
@@ -337,20 +387,22 @@ python3 main.py --mode status
 
 ### 2.5 사이트 그룹
 
-116개 사이트는 10개 그룹으로 분류된다:
+`data/config/sources.yaml` 기준 활성화된 **112개 사이트가 10개 그룹**으로 분류된다 (2026-04-25 기준):
 
 | 그룹 | 카테고리 | 사이트 수 | 예시 |
 |------|---------|----------|------|
 | A | 한국 주요 일간지 | 5 | 조선, 중앙, 동아, 한겨레, 연합 |
-| B | 한국 경제지 | 4 | 매경, 한경, 파이낸셜, 머니투데이 |
-| C | 한국 니치 | 3 | 노컷, 국민, 오마이 |
-| D | 한국 IT/과학 | 10 | 38North, Bloter, 전자, ZDNet, Insight, Stratechery 등 |
-| E | 영어권 | 22 | NYT, FT, WSJ, CNN, Bloomberg, BBC, Guardian, Wired 등 |
-| F | 아시아-태평양 | 23 | SCMP, Yomiuri, Mainichi, TheHindu, Inquirer, VNExpress 등 |
-| G | 유럽/중동 | 38 | Spiegel, LeMonde, Corriere, ElPais, AlJazeera, Haaretz 등 |
+| B | 한국 경제지 | 3 | 매경, 한경 등 |
+| C | 한국 니치 | 2 | 노컷, 오마이 등 |
+| D | 한국 IT/과학 | 8 | 38North, Bloter, ZDNet 등 |
+| E | 영어권 | 23 | NYT, FT, WSJ, CNN, Bloomberg, BBC, Guardian, TechCrunch, TheVerge, Ars Technica, 404 Media 등 |
+| F | 아시아-태평양 | 20 | SCMP, Mainichi, TheHindu, Inquirer, VNExpress, Globaltimes 등 |
+| G | 유럽/중동 | 34 | Spiegel, LeMonde, Corriere, ElPais, AlJazeera, Haaretz 등 |
 | H | 아프리카 | 4 | AllAfrica, Africanews, TheAfricaReport, Panapress |
-| I | 라틴 아메리카 | 8 | Clarin, Folha, ElMercurio, BioBioChile, ElTiempo 등 |
+| I | 라틴 아메리카 | 9 | Clarin, Folha, ElMercurio, BioBioChile, ElTiempo 등 |
 | J | 러시아/중앙아시아 | 4 | RIA, RG, RBC, GoGo Mongolia |
+
+> **어댑터 파일은 123개**(`src/crawling/adapters/{kr_major:12, kr_tech:11, english:22, multilingual:78}`). 일부 어댑터는 `enabled:false`로 비활성화되어 있다.
 
 ---
 
@@ -540,38 +592,44 @@ python3 main.py --mode analyze --stage 5
 
 ## 5. 대시보드 (Streamlit)
 
-### 5.1 실행
+이 시스템은 **두 개의 인터랙티브 대시보드 + 한 개의 헬퍼 모듈**로 구성된다:
+
+| 파일 | 줄수 | 역할 | 실행 |
+|------|------|------|------|
+| **`dashboard.py`** | 2,319 | **종합 대시보드** — 일/월/분기/연 다기간 집계, BigData Engine 결과 통합 | `streamlit run dashboard.py` (port 8501) |
+| **`insights_dashboard.py`** | 758 | **Workflow B 전용** — M1-M7 모듈별 상세 시각화 | `streamlit run insights_dashboard.py --server.port 8502` |
+| `dashboard_insights.py` | 1,222 | **헬퍼 모듈** (LLM 미사용 결정론적 인사이트 카드 추출) — `dashboard.py`가 import 함. 단독 실행 X | (라이브러리) |
+
+### 5.1 종합 대시보드 — `dashboard.py`
 
 ```bash
 streamlit run dashboard.py
 ```
 
-브라우저에서 `http://localhost:8501` 접속.
-
-### 5.2 사이드바 컨트롤
-
-| 컨트롤 | 설명 |
-|--------|------|
-| **기간** | Daily / Monthly / Quarterly / Yearly |
-| **기준 날짜** | 데이터가 존재하는 날짜 선택 |
-
-대시보드는 `data/raw/` 하위의 `YYYY-MM-DD` 디렉터리를 자동 탐색하여 사용 가능한 날짜를 표시한다.
-
-### 5.3 탭 구성
+**6개 탭**:
 
 | 탭 | 내용 |
 |----|------|
-| **Overview** | 총 기사 수, 소스별 분포, 카테고리별 분포, 언어별 분포 차트 |
-| **Topics** | BERTopic 토픽 목록, 토픽별 기사 수, 대표 키워드, 토픽 비율 파이 차트 |
-| **Sentiment & Emotions** | 소스별/카테고리별 감성 분포, 감정(Plutchik 8가지) 히트맵 |
-| **Time Series** | 시계열 트렌드, STL 분해 결과, 버스트 감지 시각화 |
-| **Word Cloud** | 전체/토픽별/카테고리별 워드 클라우드 (한국어 + 영어) |
-| **Article Explorer** | 개별 기사 검색, 필터, 원문 링크, 분석 결과 상세 |
+| **Run Summary** | W1→W2→W3→W4 종합 현황 + BigData KPI 6종(Enriched 기사수, Geo 추출률, GTI, 신뢰도 등) + STEEPSS 파이차트 + Geo Top10 + 18문 일람 + GTI 시계열 + Signal Portfolio + Weekly Future Map |
+| **Overview** | 빅데이터 KPI + 총 기사 수 + 소스/카테고리/언어 분포 |
+| **Topics** | BERTopic 토픽 목록, 비율 파이차트 |
+| **Sentiment & Emotions** | 감성 분포 + Plutchik 8감정 히트맵 |
+| **Word Cloud** | 한국어 + 영어 워드 클라우드 |
+| **🔢 18 Questions** | 18문 인터랙티브 카드, 날짜선택, 히스토리 스택바, GTI 시계열, Portfolio 추적 |
 
-### 5.4 대시보드 스크린샷 예시
+**사이드바 컨트롤**: 기간(Daily / Monthly / Quarterly / Yearly), 기준 날짜.
 
-대시보드는 다중 기간(Daily/Monthly/Quarterly/Yearly) 집계를 지원한다.
-월간 선택 시 해당 월의 모든 날짜 데이터를 자동 병합하여 보여준다.
+### 5.2 Workflow B 전용 — `insights_dashboard.py`
+
+```bash
+.venv/bin/python -m streamlit run insights_dashboard.py --server.port 8502
+```
+
+`data/insights/{run_id}/` 산출물을 읽어 8개 탭으로 시각화: **Overview · M1 Cross-Lingual · M2 Narrative · M3 Entity · M4 Temporal · M5 Geopolitical · M6 Economic · M7 Synthesis**.
+
+### 5.3 다기간 집계
+
+종합 대시보드는 다중 기간(Daily/Monthly/Quarterly/Yearly)을 지원하여 월간 선택 시 해당 월 전체를 자동 병합한다.
 
 ---
 
@@ -581,26 +639,46 @@ streamlit run dashboard.py
 
 ```
 data/
-├── raw/YYYY-MM-DD/           ← 크롤링 원본 (JSONL)
-│   ├── all_articles.jsonl    ← 전체 기사 (1행 = 1기사)
-│   ├── crawl_report.json     ← 크롤링 리포트
-│   └── *.jsonl               ← 사이트별 개별 파일
-├── processed/YYYY-MM-DD/     ← 전처리 결과 (Stage 1-2)
-├── features/YYYY-MM-DD/      ← 특성 추출 결과 (Stage 2)
-├── analysis/YYYY-MM-DD/      ← 분석 결과 (Stage 3-7)
-│   └── analysis.parquet      ← 기사별 분석 결과 (21 columns)
-├── output/YYYY-MM-DD/        ← 최종 산출물
-│   ├── articles.parquet      ← 정제된 기사 (12 columns, ZSTD)
-│   ├── analysis.parquet      ← 분석 결과 (21 columns, ZSTD)
-│   ├── topics.parquet        ← 토픽 정보 (7 columns)
-│   ├── signals.parquet       ← 신호 분류 (12 columns)
-│   └── index.sqlite          ← 검색 인덱스 (FTS5)
-├── dedup.sqlite              ← 중복 제거 DB (전역)
-└── logs/                     ← 실행 로그
-    ├── daily/                ← 일일 파이프라인 로그
-    ├── weekly/               ← 주간 리스캔 로그
-    ├── errors.log            ← 에러 로그 (누적)
-    └── alerts/               ← 실패 알림 파일
+├── raw/YYYY-MM-DD/                ← 크롤링 원본 (JSONL) — W1
+│   ├── all_articles.jsonl         ← 전체 기사 (1행 = 1기사)
+│   ├── crawl_report.json          ← 크롤링 리포트
+│   └── crawl_exhausted_sites.json ← Never-Abandon 미완료 사이트 (있으면)
+├── processed/YYYY-MM-DD/          ← Stage 1-2 전처리
+├── features/YYYY-MM-DD/           ← Stage 2 특성 (NER, 임베딩, TF-IDF)
+├── analysis/YYYY-MM-DD/           ← Stage 3-7 + interpretations.json (Step 6.6)
+├── output/YYYY-MM-DD/             ← Stage 8 최종 산출물
+│   ├── articles.parquet           ← 정제 기사 (ZSTD)
+│   ├── analysis.parquet           ← 분석 결과 (21 cols)
+│   ├── topics.parquet             ← BERTopic 토픽
+│   ├── signals.parquet            ← 5-Layer 신호
+│   └── index.sqlite               ← FTS5 + sqlite-vec 인덱스
+│
+├── enriched/YYYY-MM-DD/           ← [NEW] BigData Engine — articles_enriched.parquet (35 fields)
+├── answers/YYYY-MM-DD/            ← [NEW] BigData Engine — q01.json ~ q18.json + summary.json
+├── gti/                           ← [NEW] BigData Engine — Geopolitical Tension Index
+│   ├── YYYY-MM-DD/gti_daily.json
+│   └── gti_history.jsonl
+├── signal_portfolio.yaml          ← [NEW] BigData Engine — 신호 포트폴리오 단일 SOT (lifecycle 추적)
+│
+├── insights/{run_id}/             ← Workflow B (M1-M7) — synthesis/insight_report.md + intelligence/*.parquet
+├── dci/runs/{run_id}/             ← [NEW] DCI 14계층 출력 + final_report.md
+├── domain-knowledge.yaml          ← [NEW] DKS — 구조화된 엔티티/관계 (P1 검증 대상)
+├── dedup.sqlite                   ← 중복 제거 DB (전역)
+├── models/                        ← 학습된 모델 가중치 (HF 모델 캐시)
+└── logs/                          ← 실행 로그
+    ├── daily/                     ← 일일 파이프라인 로그 + Step별 분리 로그(w4-appendix, dci-appendix, chart-interp, bigdata-engine, wiki-ingest)
+    ├── weekly/                    ← 주간 리스캔 리포트
+    ├── errors.log                 ← 에러 로그 (누적)
+    └── alerts/                    ← 실패 알림
+
+reports/                           ← 사람이 읽는 보고서
+├── public/YYYY-MM-DD/             ← [NEW] Public Narrative 3계층 (interpretation/insight/future + .ko.md)
+├── final/                         ← W4 Master Integration (integrated-report-{date}.md)
+└── weekly_future_map/YYYY-W##/    ← [NEW] Weekly Future Map (EN + KO)
+
+newspaper/                         ← [NEW] WF5 Personal Newspaper
+├── daily/YYYY-MM-DD/index.html    ← 일간판 (~135K 단어)
+└── weekly/YYYY-W##/               ← 주간판 (~205K 단어, 일요일만)
 ```
 
 ### 6.2 Parquet 스키마
@@ -798,11 +876,11 @@ crontab -e
 ### 7.3 일일 파이프라인 (run_daily.sh) 상세
 
 실행 흐름:
-1. 가상환경 자동 감지 및 활성화
-2. 사전 건강 점검 (디스크 공간, 의존성)
-3. 잠금 파일 획득 (동시 실행 방지)
-4. `main.py --mode full` 실행 (4시간 타임아웃)
-5. 로그 회전 (500MB 초과 시 30일 이상 로그 삭제)
+1. **Step 1-2**: 가상환경 자동 감지 및 활성화 + 사전 건강 점검 (디스크 공간, 의존성)
+2. **Step 3**: 잠금 파일 획득 (동시 실행 방지, `src.utils.self_recovery --acquire-lock daily`)
+3. **Step 4**: `main.py --mode full` 실행 (8시간 타임아웃 — `PIPELINE_TIMEOUT=28800`)
+4. **Step 5**: 로그 회전 (30일 이상 로그 삭제)
+5. **Step 6.x ~ 7b**: 7단계 후처리 체인 (위 §0.1 표 참고)
 6. 잠금 파일 해제
 
 Exit codes:
@@ -812,7 +890,9 @@ Exit codes:
 | 1 | 파이프라인 실패 |
 | 2 | 건강 점검 실패 |
 | 3 | 잠금 획득 실패 (다른 인스턴스 실행 중) |
-| 4 | 타임아웃 (4시간 초과) |
+| 4 | 타임아웃 (8시간 초과) |
+
+> **타임아웃 4h → 8h (ADR-083)**: WF5 Personal Newspaper 일간판이 14개 편집국 × Claude CLI 호출로 ~1.5–2h 추가 소요. 후처리 단계는 모두 fail-soft이므로, 일부 단계가 실패해도 본체 파이프라인 exit code에 영향 없음.
 
 ```bash
 # 수동 실행
@@ -1083,12 +1163,260 @@ Claude Code 내에서 `/run` 또는 시작 트리거를 입력하면:
 
 ---
 
-## 11. 관련 문서
+## 11. BigData Engine — 18-Question · GTI · Signal Portfolio (Step 6.7)
+
+`scripts/run_daily.sh` Step 6.7에서 BigData Engine이 실행된다. **18개 미래연구 질문에 매일 강제 응답**하고, 지정학 긴장 지수(GTI)를 산출하며, 미래 신호 포트폴리오 생애주기를 추적한다. 데이터 부족일에도 `status:'insufficient_data'`로 응답하여 18문 계약을 유지한다.
+
+### 11.1 18-Question 답변 조회
+
+```bash
+# 오늘 18문 요약
+cat data/answers/$(date +%Y-%m-%d)/summary.json | python3 -m json.tool
+
+# 특정 질문 (예: Q07 양국 관계 긴장)
+cat data/answers/$(date +%Y-%m-%d)/q07.json | python3 -m json.tool
+
+# Python으로 모든 질문 로드
+python3 -c "
+import json, glob
+for f in sorted(glob.glob('data/answers/$(date +%Y-%m-%d)/q*.json')):
+    d = json.load(open(f))
+    print(f\"{d['question_id']}: {d['title']} ({d['status']})\")
+"
+```
+
+### 11.2 18개 질문 목록
+
+전체 정의는 `src/analysis/question_engine.py` (line 287~1441)에 있다. 요약:
+
+| ID | 질문 | 비고 |
+|----|------|------|
+| Q01 | 이 주제는 언제 갑자기 터졌나? (버스트 탐지) | |
+| Q02 | 성장 vs 소멸 트렌드는? | |
+| Q03 | 사건 전후 보도 구조 변화 | |
+| Q04 | 같은 주제를 언어 간 어떻게 다르게 프레이밍하는가? | |
+| Q05 | 특정 국가에 대한 글로벌 감성 변화 | |
+| Q06 | 국제 뉴스의 'dark corners' (보도 사각지대) | |
+| Q07 | 어떤 양국 관계가 급격히 긴장/완화되는가? | |
+| Q08 | 부상하는 약한 신호 | |
+| Q09 | 패러다임 전환의 전조 | |
+| Q10 | 비주류→주류 의제 이동 패턴 | 21일+ 데이터 필요 |
+| Q11 | 의제 선점(최초 보도) 언론사 | |
+| Q12 | 진보/보수 미디어 강조점 차이 | |
+| Q13 | 언어권별 독자적 의제 | |
+| Q14 | 미디어 간 보도 격차 | |
+| Q15 | 뉴스 감성이 경제 지표를 선행하는가? | 7일+ 데이터 필요 |
+| Q16 | 이슈 인과 연쇄 (STEEPS 공기 기반) | |
+| Q17 | 동시 급증 이슈 클러스터 | |
+| Q18 | 인물·기관·국가 글로벌 의제 중심성 | |
+
+### 11.3 GTI (Geopolitical Tension Index)
+
+```bash
+# 오늘 GTI
+cat data/gti/$(date +%Y-%m-%d)/gti_daily.json | python3 -m json.tool
+
+# 시계열 히스토리 로드
+python3 -c "
+import pandas as pd
+gti = pd.read_json('data/gti/gti_history.jsonl', lines=True)
+print(gti.tail(14)[['date', 'gti_score', 'level']])
+"
+```
+
+GTI 공식: `40% × G1(Q05 국가별 감성) + 35% × G2(Q06 dark corners) + 25% × G3(Q07 양국 긴장)`. 0–100 스케일. 임계값은 `data/config/`에 정의.
+
+### 11.4 Signal Portfolio (단일 SOT)
+
+`data/signal_portfolio.yaml`은 미래 신호의 생애주기(CANDIDATE → ACTIVE → CONFIRMED → ARCHIVED)를 추적하는 **단일 SOT**이다. Step 6.7에서 매일 갱신.
+
+```bash
+python3 -c "
+import yaml
+p = yaml.safe_load(open('data/signal_portfolio.yaml'))
+for s in p['signals']:
+    if s['status'] == 'active':
+        print(f\"[{s['steeps']}] {s['name']} (since {s['first_seen']})\")
+"
+```
+
+### 11.5 Weekly Future Map
+
+매주 자동 생성되는 7일 종합 미래 맵 (18문 + GTI + Portfolio).
+
+```bash
+ls reports/weekly_future_map/$(date +%Y-W%V)/
+# future_map.md      (English original)
+# future_map.ko.md   (Korean translation)
+```
+
+---
+
+## 12. DCI — Deep Content Intelligence (독립 워크플로우)
+
+DCI는 W1→W2→W3→W4 체인과 **독립**으로 작동한다. `data/raw/{date}/all_articles.jsonl`만 입력으로 사용.
+
+### 12.1 실행
+
+```bash
+# 권장 — 에이전트 오케스트레이션
+/run-dci-only
+
+# 직접 Python (CI/테스트용)
+.venv/bin/python main.py --mode dci --date YYYY-MM-DD --dry-run
+.venv/bin/python main.py --mode dci --date YYYY-MM-DD
+
+# 비활성화 (파이프라인 체인에서 제외)
+DCI_DISABLED=1 .venv/bin/python main.py --mode full
+```
+
+### 12.2 출력
+
+```
+data/dci/runs/{run_id}/
+├── final_report.md              ← 박사급 종합 보고서 (L10 Doctoral Narrator)
+├── final_report.ko.md           ← 한국어 번역 (@translator)
+├── executive_summary.md
+├── evidence_ledger.jsonl        ← CE4 3계층 증거 체인
+├── layers/                      ← L0 ~ L9 중간 산출물
+└── sg_superhuman_verdict.json   ← 10-게이트 검증 결과
+```
+
+### 12.3 14개 레이어 (L-1 → L11)
+
+| Layer | 역할 | 구현 |
+|-------|------|------|
+| L-1 | 외부 지식 pre-fetch | skeleton (API 미사용) |
+| L0 | 문서 구조화 (Kiwi + 다국어 regex + PDTB + URL) | 순수 Python |
+| L1 | 의미 단위 추출 (claims/quotes/numerical/CAMEO) | 순수 Python |
+| L1.5 | 의미 표상 (휴리스틱 SPO + FrameNet-lite) | 순수 Python |
+| L2 | 관계·화용 (Allen 13-relation + timex3 + hedging) | 순수 Python |
+| L3 | 지식 그래프 (NetworkX entity 공기 + community) | 순수 Python |
+| L4 | 교차문서 (SimHash + Jaccard thread clustering) | 순수 Python |
+| L5 | 심리·문체 (textstat + TTR/MTLD/HDD + Burrows Delta) | 순수 Python |
+| **L6** | **Triadic Ensemble (4-lens α/β/γ/δ-critic)** | **Claude CLI** |
+| L7 | Graph-of-Thought (Bayesian DAG) | 순수 Python |
+| L8 | Monte Carlo (1,024-leaf scenario tree) | 순수 Python |
+| L9 | Metacognitive (블라인드 스팟 + 불확실성 분해) | 순수 Python |
+| **L10** | **Doctoral Narrator (CE3 숫자 검증)** | **Claude CLI** |
+| L11 | Dashboard 탭 표시 | Streamlit |
+
+### 12.4 SG-Superhuman 10-Gate 검증
+
+모든 DCI run은 다음 게이트를 통과해야 PASS:
+
+- G1 `char_coverage = 1.00` — 본문 전수 진입
+- G2 `triple_lens_coverage ≥ 3.0` — 문자당 평균 3+ 렌즈
+- G3 `llm_body_injection_ratio = 1.00` — L6에 본문 100% 투입
+- G4 `technique_completeness = 93/93`
+- G5 `nli_verification_pass_rate ≥ 0.95` (DeBERTa-v3-MNLI)
+- G6 `triadic_consensus_rate ≥ 0.60`
+- G7 `adversarial_critic_pass ≥ 0.90`
+- G8 `evidence_3layer_complete = 100%` (CE4 article/segment/char)
+- G9 `technique_mode_compliance = 100%`
+- G10 `uncertainty_quantified = 100%`
+
+독립 검증:
+```bash
+python3 .claude/hooks/scripts/validate_dci_sg_superhuman.py --run-id {run_id} --project-dir .
+python3 .claude/hooks/scripts/validate_dci_evidence.py --run-id {run_id} --project-dir .
+python3 .claude/hooks/scripts/validate_dci_narrative.py --run-id {run_id} --project-dir .
+```
+
+상세: `prompt/execution-workflows/dci.md` (7-Phase protocol), `DECISION-LOG.md` ADR-071·072·079.
+
+---
+
+## 13. Public Narrative — 3계층 일반인 해석 (Step 6.5)
+
+기술적 산출물 위에 얹히는 **일반인 친화 translation layer**. `facts_pool.json`을 단일 진실 원천 삼아 Claude CLI가 프로즈를 쓰고 Python이 재검증.
+
+| Layer | 이름 | 질문 | FKGL | 금지 |
+|-------|------|------|------|------|
+| L1 | 해석 (Interpretation) | "이게 무슨 뜻?" | ≤ 9 | 미래 예측 |
+| L2 | 통찰 (Insight) | "무슨 패턴?" | ≤ 12 | L1 반복 |
+| L3 | 미래 (Future) | "앞으로는?" | ≤ 13 | 확정적 예측 |
+
+**8개 PUB P1 검증** (모두 Python 결정론):
+- PUB1 파일 존재 · PUB2 Korean-aware grade · PUB3 jargon ratio
+- PUB4 숫자 parity (`facts_pool.numbers` 화이트리스트)
+- PUB5 `[ev:xxx]` 화이트리스트 · PUB6 필수 섹션
+- PUB7 금지어 (반드시/100%/확실히) · PUB8 EN↔KO 구조 parity
+
+```bash
+# 수동 실행
+python3 .claude/hooks/scripts/generate_public_layers.py --date 2026-04-25
+# 또는 슬래시 커맨드
+/generate-public-layers --date 2026-04-25
+# 특정 레이어만 재생성
+/generate-public-layers --only L2 --date 2026-04-25
+```
+
+산출물: `reports/public/{date}/{interpretation,insight,future}.md` + `.ko.md` + `facts_pool.json` + `generation_metadata.json`. 대시보드 `📋 Run Summary` 탭의 `📖 일반인용 3-Layer 해석` 섹션에서 즉시 표시.
+
+---
+
+## 14. Chart Interpretations — 6탭 차트 해석 카드 (Step 6.6)
+
+각 대시보드 탭 상단에 🌱 해석 / 💡 인사이트 / 🔮 미래통찰 카드를 자동 렌더. 6 탭(Overview·Topics·Sentiment·TimeSeries·WordCloud·W3Insight)만 LLM 생성. Article Explorer는 인터랙티브이므로 Python-only 처리.
+
+```bash
+/generate-chart-interpretations              # 오늘 6 탭 전체 생성
+python3 scripts/reports/generate_chart_interpretations.py \
+  --date 2026-04-25 --only overview,topics   # 특정 탭만
+```
+
+**검증** (모두 Python 결정론, Public Narrative validator 재사용):
+- CI1 구조 · CI2 FKGL · CI3 숫자 parity · CI4 마커 whitelist · CI5 금지어 · CI6 cross-tab refs
+
+---
+
+## 15. WF5 — Personal Newspaper / 나만의 신문 (ADR-083)
+
+W1 raw 코퍼스를 소비해 NYT-style HTML 신문을 발행하는 독립 워크플로우. 17명의 편집 에이전트 팀 (Chief Editor + 6 Continental Desks + 6 STEEPS Section Desks + 4 Specialty).
+
+### 15.1 발행 주기
+
+| 판본 | 주기 | 분량 | 경로 |
+|------|------|------|------|
+| 일간 | 매일 (cron) | ~135,000 단어 (≈9시간 읽기) | `newspaper/daily/{date}/` |
+| 주간 | 일요일, ≥4 일간판 후 | ~205,000 단어 | `newspaper/weekly/{YYYY-W##}/` |
+
+### 15.2 실행
+
+```bash
+/run-newspaper-only                          # 오늘 일간 생성
+/run-newspaper-weekly --week 2026-W17        # 특정 주간
+# Skeleton (HTML 골격만, LLM 미호출, ~3초)
+python3 scripts/reports/generate_newspaper_daily.py \
+  --date 2026-04-25 --skeleton-only --project-dir .
+```
+
+### 15.3 15 편집 원칙
+
+P1 완전 지리 커버리지 · P2 Balance Code (30% 상한) · P3 계층 일관성 · P4 고정 분량(±20%) · P5 3-Tier (global/local/weak_signal) · P6 Source Triangulation · P7 STEEPS 균형 · P8 CE4 증거 · P9 Fact/Context/Opinion 분리 · P10 Confidence Level · P11 한국어 일차 · P12 미래학자 관점 · P13 Dark Corners · P14 No Clickbait · P15 No Single-Source.
+
+### 15.4 검증
+
+`validate_newspaper.py` NP1-NP12 (파일 존재 · 단어 수 · 대륙 커버리지 · STEEPS · Dark Corners · Triangulation · CE4 밀도 · F/C/O 구조 · Confidence 라벨 · 금지어 · 단일소스 · HTML 유효성).
+
+대시보드: 종합 대시보드의 `📰 Newspaper (WF5)` 탭 — iframe으로 HTML 직접 렌더.
+
+---
+
+## 16. 관련 문서
 
 | 문서 | 내용 |
 |------|------|
-| [`GLOBALNEWS-README.md`](GLOBALNEWS-README.md) | 시스템 개요, 빠른 시작, 실행 결과 |
-| [`GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md`](GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md) | 설계 철학, 4-Layer 시스템 아키텍처 + 5계층 QA |
+| [`README.md`](README.md) | 영한 병기 시스템 개요, 빠른 시작 |
+| [`GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md`](GLOBALNEWS-ARCHITECTURE-AND-PHILOSOPHY.md) | 설계 철학, 시스템 아키텍처 |
+| [`GLOBALNEWS-EXECUTION-WORKFLOWS.md`](GLOBALNEWS-EXECUTION-WORKFLOWS.md) | W1/W2/W3/W4/DCI/WF5 실행 프로토콜 |
+| [`GLOBALNEWS-EVIDENCE-CHAIN.md`](GLOBALNEWS-EVIDENCE-CHAIN.md) | CE3/CE4 증거 체인 |
+| [`GLOBALNEWS-SEMANTIC-GATES.md`](GLOBALNEWS-SEMANTIC-GATES.md) | SG1–SG3 + SG-Superhuman |
+| [`GLOBALNEWS-P1-EXTENSIONS.md`](GLOBALNEWS-P1-EXTENSIONS.md) | P1 할루시네이션 봉쇄 확장 |
+| [`prompt/execution-workflows/dci.md`](prompt/execution-workflows/dci.md) | DCI 7-Phase protocol 상세 |
 | [`prompt/workflow.md`](prompt/workflow.md) | 20-step 워크플로우 설계도 (구축 과정 기록) |
-| [`config/sources.yaml`](config/sources.yaml) | 116개 사이트 설정 (URL, 선택자, 제한) |
+| [`data/config/sources.yaml`](data/config/sources.yaml) | 112개 사이트 설정 |
 | [`data/config/pipeline.yaml`](data/config/pipeline.yaml) | 8-Stage 분석 파이프라인 설정 |
+| [`data/config/insights.yaml`](data/config/insights.yaml) | Workflow B + 경보 임계값 |
+| [`DECISION-LOG.md`](DECISION-LOG.md) | ADR-001 → ADR-083+ |
